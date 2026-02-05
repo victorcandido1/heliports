@@ -10,6 +10,7 @@ Fontes:
   - GeoSampa: WFS da Prefeitura de São Paulo (camada de helipontos)
 """
 
+import csv
 import io
 import logging
 import re
@@ -167,7 +168,10 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
         log.info("Loading ANAC data from local file: %s", local_csv)
         for sep in [";", ","]:
             try:
-                df = pd.read_csv(local_csv, sep=sep, encoding="utf-8-sig")
+                df = pd.read_csv(
+                    local_csv, sep=sep, encoding="utf-8-sig",
+                    quoting=csv.QUOTE_NONE,
+                )
                 if len(df.columns) > 3:
                     break
             except Exception:
@@ -183,7 +187,10 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
             content = resp.content.decode("utf-8-sig", errors="replace")
             for sep in [";", ","]:
                 try:
-                    candidate = pd.read_csv(io.StringIO(content), sep=sep)
+                    candidate = pd.read_csv(
+                        io.StringIO(content), sep=sep,
+                        quoting=csv.QUOTE_NONE,
+                    )
                     if len(candidate.columns) > 3:
                         df = candidate
                         log.info(
@@ -431,6 +438,7 @@ def spatial_join(
 
     # Project to UTM for metre-based distance
     gs = gdf_geosampa.to_crs(CRS_UTM23S).copy()
+    gs["_gs_idx"] = range(len(gs))
     anac = gdf_anac.to_crs(CRS_UTM23S).copy()
 
     # --- 1. Match GeoSampa → nearest ANAC ---
@@ -444,7 +452,7 @@ def spatial_join(
 
     # sjoin_nearest may produce duplicates; keep closest match per GeoSampa row
     joined = joined.sort_values("dist_metros").drop_duplicates(
-        subset=[gs.index.name or "index"], keep="first"
+        subset=["_gs_idx"], keep="first"
     )
 
     # --- 2. Identify ANAC records with no GeoSampa match ---
