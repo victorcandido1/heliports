@@ -63,6 +63,14 @@ ANAC_URLS = [
     ),
 ]
 
+# DECEA WFS — official aeronautical data from Brazilian Air Force (fallback).
+DECEA_WFS_URL = (
+    "https://geoaisweb.decea.mil.br/geoserver/ICA/ows?"
+    "service=WFS&version=1.0.0&request=GetFeature"
+    "&typeName=ICA:heliport&outputFormat=application%2Fjson"
+    "&maxFeatures=5000"
+)
+
 # GeoSampa WFS — layer names to try in order.
 GEOSAMPA_WFS_BASE = (
     "http://wfs.geosampa.prefeitura.sp.gov.br/geoserver/geoportal/ows"
@@ -204,6 +212,11 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
             if df is not None and len(df.columns) > 3:
                 break
 
+    # --- Fallback: DECEA WFS (official aeronautical GeoServer) ---
+    if df is None or df.empty:
+        log.info("Trying DECEA WFS as fallback for ANAC data...")
+        df = _load_anac_from_decea()
+
     if df is None or df.empty:
         log.error(
             "Could not load ANAC data from any source. "
@@ -223,7 +236,8 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
 
     # --- Filter to UF=SP, MUNICÍPIO=SÃO PAULO ---
     if col_map["uf"]:
-        df = df[df[col_map["uf"]].astype(str).str.strip().str.upper() == "SP"]
+        uf_vals = df[col_map["uf"]].astype(str).str.strip().str.upper()
+        df = df[uf_vals.isin(["SP"]) | uf_vals.str.contains("S.O PAULO", regex=True, na=False)]
     if col_map["municipio"]:
         df = df[
             df[col_map["municipio"]]
@@ -291,6 +305,44 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
     return gdf
 
 
+def _load_anac_from_decea() -> pd.DataFrame | None:
+    """Fetch heliport data from DECEA GeoServer (Brazilian Air Force AIS)."""
+    try:
+        resp = _download_with_retries(DECEA_WFS_URL, timeout=60)
+        if resp is None:
+            return None
+        data = resp.json()
+        features = data.get("features", [])
+        if not features:
+            return None
+
+        rows = []
+        for f in features:
+            p = f.get("properties", {})
+            geom = f.get("geometry", {})
+            coords = geom.get("coordinates", [None, None])
+            rows.append({
+                "Código OACI": p.get("localidade_id", ""),
+                "CIAD": p.get("ciad", ""),
+                "Nome": p.get("nome", ""),
+                "Município": p.get("cidade", ""),
+                "UF": p.get("uf", ""),
+                "Latitude": p.get("latitude", ""),
+                "Longitude": p.get("longitude", ""),
+                "LatGeoPoint": str(coords[1]) if coords[1] else "",
+                "LonGeoPoint": str(coords[0]) if coords[0] else "",
+                "Operação": p.get("opr", ""),
+                "Tipo": p.get("tipo_util", ""),
+                "Validade do Registro": p.get("efetivacao", ""),
+            })
+        df = pd.DataFrame(rows)
+        log.info("Loaded %d heliports from DECEA WFS", len(df))
+        return df
+    except Exception as exc:
+        log.warning("Failed to load from DECEA WFS: %s", exc)
+        return None
+
+
 def _detect_anac_columns(df: pd.DataFrame) -> dict:
     """Heuristically map ANAC DataFrame columns to semantic roles."""
     cols = {c.upper(): c for c in df.columns}
@@ -302,16 +354,20 @@ def _detect_anac_columns(df: pd.DataFrame) -> dict:
                     return col_orig
         return None
 
+    # Prefer pre-computed decimal coords (LatGeoPoint/LonGeoPoint) when available
+    lat_dec = _find("LATGEOPOINT", "LAT_DEC", "LATITUDE_DEC")
+    lon_dec = _find("LONGEOPOINT", "LON_DEC", "LONGITUDE_DEC")
+
     return {
-        "lat": _find("LATITUDE", "LAT"),
-        "lon": _find("LONGITUDE", "LONG", "LON"),
+        "lat": lat_dec or _find("LATITUDE", "LAT"),
+        "lon": lon_dec or _find("LONGITUDE", "LONG", "LON"),
         "nome": _find("NOME"),
-        "oaci": _find("OACI", "ICAO"),
+        "oaci": _find("OACI", "ICAO", "LOCALIDADE"),
         "ciad": _find("CIAD"),
         "uf": _find("UF"),
         "municipio": _find("MUNIC", "CIDADE"),
         "operacao": _find("OPERA"),
-        "validade": _find("VALIDADE"),
+        "validade": _find("VALIDADE", "EFETIVA"),
     }
 
 
