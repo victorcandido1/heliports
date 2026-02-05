@@ -73,7 +73,7 @@ DECEA_WFS_URL = (
 
 # GeoSampa WFS — layer names to try in order.
 GEOSAMPA_WFS_BASE = (
-    "http://wfs.geosampa.prefeitura.sp.gov.br/geoserver/geoportal/ows"
+    "https://wfs.geosampa.prefeitura.sp.gov.br/geoserver/geoportal/ows"
 )
 GEOSAMPA_LAYER_NAMES = [
     "geoportal:GEOSAMPA_heliponto",
@@ -447,11 +447,19 @@ def load_geosampa(local_file: str | None = None) -> gpd.GeoDataFrame:
     if name_col and name_col != "gs_nome":
         gdf = gdf.rename(columns={name_col: "gs_nome"})
 
+    # Identify OACI code column (tx_endereco_heliponto holds OACI in GeoSampa)
+    oaci_col = None
+    for candidate in ["tx_endereco_heliponto", "cd_oaci", "oaci"]:
+        if candidate in gdf.columns:
+            oaci_col = candidate
+            break
+    if oaci_col and oaci_col != "gs_oaci":
+        gdf = gdf.rename(columns={oaci_col: "gs_oaci"})
+
     # Identify address column
     addr_col = None
     for candidate in [
         "nm_logradouro_heliponto",
-        "tx_endereco_heliponto",
         "endereco",
         "logradouro",
     ]:
@@ -460,6 +468,22 @@ def load_geosampa(local_file: str | None = None) -> gpd.GeoDataFrame:
             break
     if addr_col and addr_col != "gs_endereco":
         gdf = gdf.rename(columns={addr_col: "gs_endereco"})
+
+    # Build full address if type + name available
+    if "tp_logradouro_heliponto" in gdf.columns and "gs_endereco" in gdf.columns:
+        gdf["gs_endereco"] = (
+            gdf["tp_logradouro_heliponto"].fillna("").astype(str)
+            + " "
+            + gdf["gs_endereco"].fillna("").astype(str)
+        ).str.strip()
+
+    # Add house number if available
+    if "nr_endereco_heliponto" in gdf.columns and "gs_endereco" in gdf.columns:
+        gdf["gs_endereco"] = (
+            gdf["gs_endereco"]
+            + ", "
+            + gdf["nr_endereco_heliponto"].fillna("").astype(str)
+        ).str.rstrip(", ")
 
     # Identify status column from GeoSampa
     status_col = None
@@ -597,7 +621,7 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         color = STATUS_COLORS.get(status, "gray")
 
         nome = row.get("gs_nome") or row.get("anac_nome") or "Sem nome"
-        oaci = row.get("anac_oaci", "N/A")
+        oaci = row.get("gs_oaci") or row.get("anac_oaci") or "N/A"
         dist = row.get("dist_metros")
         dist_str = f"{dist:.0f}m" if pd.notna(dist) else "N/A"
 
@@ -634,8 +658,10 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
     # Select and order key columns
     key_cols = [
         "gs_nome",
+        "gs_oaci",
         "gs_endereco",
         "gs_situacao",
+        "nm_distrito_municipal",
         "anac_nome",
         "anac_oaci",
         "anac_ciad",
