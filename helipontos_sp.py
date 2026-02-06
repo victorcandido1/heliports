@@ -578,38 +578,55 @@ def spatial_join(
 # ---------------------------------------------------------------------------
 
 STATUS_COLORS = {
-    "REGULAR": "green",
-    "DIVERGENTE_ANAC_INATIVO": "orange",
-    "NÃO_CADASTRADO_ANAC": "red",
-    "NÃO_CADASTRADO_PREFEITURA": "purple",
+    "REGULAR": "#2ecc71",
+    "DIVERGENTE_ANAC_INATIVO": "#e67e22",
+    "NÃO_CADASTRADO_ANAC": "#e74c3c",
+    "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
 }
 
 
 def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     """Create an interactive Folium map of heliport statuses."""
 
-    # Centre on São Paulo
-    center = [-23.55, -46.63]
-    m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
+    # Centre on São Paulo — Berrini/Faria Lima region
+    center = [-23.585, -46.685]
+    m = folium.Map(location=center, zoom_start=13, tiles=None)
 
-    # Legend HTML
-    legend_html = """
-    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000;
-         background: white; padding: 12px 16px; border-radius: 8px;
-         box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-size: 13px;
-         font-family: Arial, sans-serif;">
-      <b>Status do Heliponto</b><br>
-      <i style="background:green;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;"></i> Regular<br>
-      <i style="background:orange;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;"></i> Inativo na ANAC<br>
-      <i style="background:red;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;"></i> Não cadastrado ANAC<br>
-      <i style="background:purple;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;"></i> Não cadastrado Prefeitura<br>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # --- Tile layers ---
+    folium.TileLayer(
+        tiles=(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/"
+            "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr="Esri World Imagery",
+        name="Satélite (Esri)",
+        overlay=False,
+    ).add_to(m)
+    folium.TileLayer(
+        tiles=(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/"
+            "Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr="Esri Labels",
+        name="Rótulos de ruas",
+        overlay=True,
+        show=True,
+    ).add_to(m)
+    folium.TileLayer("CartoDB positron", name="Mapa claro").add_to(m)
+
+    # --- Feature groups for layer control ---
+    STATUS_LABELS = {
+        "REGULAR": "Regular (ambas bases)",
+        "DIVERGENTE_ANAC_INATIVO": "ANAC inativo",
+        "NÃO_CADASTRADO_ANAC": "Sem cadastro ANAC",
+        "NÃO_CADASTRADO_PREFEITURA": "Sem cadastro Prefeitura",
+    }
+    groups = {}
+    for status_key, label in STATUS_LABELS.items():
+        color = STATUS_COLORS.get(status_key, "gray")
+        count = len(gdf[gdf["status_consolidado"] == status_key])
+        fg = folium.FeatureGroup(name=f"{label} ({count})", show=True)
+        groups[status_key] = fg
 
     for _, row in gdf.iterrows():
         geom = row.geometry
@@ -621,27 +638,91 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         color = STATUS_COLORS.get(status, "gray")
 
         nome = row.get("gs_nome") or row.get("anac_nome") or "Sem nome"
-        oaci = row.get("gs_oaci") or row.get("anac_oaci") or "N/A"
+        oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
+        oaci_display = oaci if (isinstance(oaci, str) and oaci.strip()) else "—"
+        ciad = row.get("anac_ciad") or ""
         dist = row.get("dist_metros")
-        dist_str = f"{dist:.0f}m" if pd.notna(dist) else "N/A"
+        dist_str = f"{dist:.0f}m" if pd.notna(dist) else "—"
+        endereco = row.get("gs_endereco") or ""
+        situacao_gs = row.get("gs_situacao") or "—"
+        distrito = row.get("nm_distrito_municipal") or ""
 
         popup_html = (
-            f"<b>{nome}</b><br>"
-            f"OACI: {oaci}<br>"
-            f"Status: {status}<br>"
-            f"Distância match: {dist_str}"
+            f"<div style='font-family:Arial,sans-serif;font-size:12px;min-width:220px'>"
+            f"<b style='font-size:14px'>{nome}</b><br>"
+            f"<hr style='margin:4px 0'>"
+            f"<b>OACI:</b> {oaci_display}<br>"
+            f"<b>CIAD:</b> {ciad}<br>"
+            f"<b>Status:</b> <span style='color:{color};font-weight:bold'>"
+            f"{status}</span><br>"
+            f"<b>Situação Prefeitura:</b> {situacao_gs}<br>"
+        )
+        if endereco:
+            popup_html += f"<b>Endereço:</b> {endereco}<br>"
+        if distrito:
+            popup_html += f"<b>Distrito:</b> {distrito}<br>"
+        popup_html += (
+            f"<b>Distância match:</b> {dist_str}<br>"
+            f"<b>Coord:</b> {lat:.5f}, {lon:.5f}"
+            f"</div>"
         )
 
+        fg = groups.get(status, list(groups.values())[0])
+
+        # Circle marker
         folium.CircleMarker(
             location=[lat, lon],
-            radius=7,
-            color=color,
+            radius=8,
+            color="white",
+            weight=2,
             fill=True,
             fill_color=color,
-            fill_opacity=0.8,
-            popup=folium.Popup(popup_html, max_width=300),
-            tooltip=nome,
-        ).add_to(m)
+            fill_opacity=0.9,
+            popup=folium.Popup(popup_html, max_width=320),
+            tooltip=f"{oaci_display} — {nome}",
+        ).add_to(fg)
+
+        # ICAO label (DivIcon)
+        if isinstance(oaci, str) and oaci.strip():
+            folium.Marker(
+                location=[lat, lon],
+                icon=folium.DivIcon(
+                    icon_size=(0, 0),
+                    icon_anchor=(0, -12),
+                    html=(
+                        f"<div style='"
+                        f"font-size:9px;font-weight:bold;color:white;"
+                        f"text-shadow:1px 1px 2px black,-1px -1px 2px black,"
+                        f"1px -1px 2px black,-1px 1px 2px black;"
+                        f"white-space:nowrap;pointer-events:none;"
+                        f"'>{oaci}</div>"
+                    ),
+                ),
+            ).add_to(fg)
+
+    for fg in groups.values():
+        fg.add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+
+    # Legend
+    legend_html = """
+    <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000;
+         background: rgba(0,0,0,0.75); padding: 12px 16px; border-radius: 8px;
+         box-shadow: 0 2px 6px rgba(0,0,0,0.5); font-size: 13px;
+         font-family: Arial, sans-serif; color: white;">
+      <b>Status do Heliponto</b><br>
+      <i style="background:#2ecc71;width:12px;height:12px;display:inline-block;
+         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Regular (ANAC + Prefeitura)<br>
+      <i style="background:#e67e22;width:12px;height:12px;display:inline-block;
+         border-radius:50%;margin-right:6px;border:1px solid white;"></i> ANAC inativo<br>
+      <i style="background:#e74c3c;width:12px;height:12px;display:inline-block;
+         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Sem cadastro na ANAC<br>
+      <i style="background:#9b59b6;width:12px;height:12px;display:inline-block;
+         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Sem cadastro na Prefeitura<br>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(legend_html))
 
     m.save(output_path)
     log.info("Map saved to %s", output_path)
