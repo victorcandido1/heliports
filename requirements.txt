@@ -3,3 +3,4 @@ geopandas>=0.14
 shapely>=2.0
 folium>=0.15
 requests>=2.31
+openpyxl>=3.1

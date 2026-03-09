@@ -2,12 +2,14 @@
 """
 Helipontos SP — Cruzamento de dados de helipontos da cidade de São Paulo.
 
-Compara a base da Prefeitura (GeoSampa) com a base nacional (ANAC)
-para identificar status de operação e discrepâncias.
+Compara três fontes oficiais para identificar status de operação e
+discrepâncias de licenciamento:
 
 Fontes:
   - ANAC: Portal de Dados Abertos (CSV de Aeródromos Privados / Helipontos)
-  - GeoSampa: WFS da Prefeitura de São Paulo (camada de helipontos)
+  - GeoSampa: WFS da Prefeitura de São Paulo (camada de helipontos / EIV-RIV)
+  - SMUL: Planilha de Autos de Licença de Funcionamento emitidos pela
+    Secretaria Municipal de Urbanismo e Licenciamento (Decreto nº 58.094/2018)
 """
 
 import csv
@@ -15,6 +17,7 @@ import io
 import logging
 import re
 import sys
+import unicodedata
 import warnings
 from pathlib import Path
 
@@ -80,6 +83,12 @@ GEOSAMPA_LAYER_NAMES = [
     "geoportal:riv_heliponto",
     "geoportal:heliponto",
 ]
+
+# SMUL — Planilha de Autos de Licença de Funcionamento emitidos pela Prefeitura.
+SMUL_XLSX_URL = (
+    "https://prefeitura.sp.gov.br/documents/d/licenciamento/"
+    "auto_de_licenca_de_helipontos_emitidos_por_smul_fev-2026-xlsx"
+)
 
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
@@ -505,7 +514,276 @@ def load_geosampa(local_file: str | None = None) -> gpd.GeoDataFrame:
 
 
 # ---------------------------------------------------------------------------
-# 4. Spatial join & status consolidation
+# 4. Data acquisition — SMUL (Autos de Licença de Funcionamento)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_street(s: str) -> str:
+    """Normalize a street name for address matching across data sources."""
+    if not s or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    s = str(s)
+    # Remove accents
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.upper().strip()
+    # Remove cross-street notation ("X R MESQUITA...")
+    s = re.sub(r"\s*X\s+R\.?\s+.*$", "", s)
+    # Remove comma-separated complements ("AV FOO, 782")
+    s = re.sub(r",\s*\d+$", "", s)
+    # Street type prefixes (start of string only)
+    s = re.sub(
+        r"^(AVENIDA|AV\.?|RUA|R\.?|ALAMEDA|AL\.?|TRAVESSA|TV\.?|"
+        r"PRACA|PC\.?|LARGO|LG\.?|ESTRADA|EST\.?|RODOVIA|ROD\.?)\s+",
+        "",
+        s,
+    )
+    # Full honorary title words (before abbreviations to avoid partial removal)
+    s = re.sub(
+        r"\b(PRESIDENTE|DOUTOR|DOUTORA|DOTOR|ENGENHEIRO|ENGENHEIRA|"
+        r"BRIGADEIRO|GENERAL|CORONEL|MAJOR|CAPITAO|"
+        r"PROFESSOR|PROFESSORA|SENADOR|GOVERNADOR|"
+        r"COMENDADOR|DESEMBARGADOR|DESEMBARGADORA|"
+        r"MINISTRO|MINISTRA|DEPUTADO|MARECHAL)\b\s*",
+        "",
+        s,
+    )
+    # Abbreviated titles (require trailing space to avoid cutting longer words)
+    s = re.sub(
+        r"\b(DR|DRA|ENG|BRIG|GEN|GAL|CEL|MAJ|CAP|"
+        r"PROF|PRES|SEN|GOV|COM|DES|MIN|DEP)\.?\s+",
+        "",
+        s,
+    )
+    # Remove suffixes like JR, JUNIOR, FILHO, NETO
+    s = re.sub(r"\b(JR\.?|JUNIOR|FILHO|NETO|SOBRINHO)\b", "", s)
+    s = s.replace(".", "")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _addr_key(street: str, number) -> str:
+    """Create a normalized address key for matching: ``STREET|NUMBER``."""
+    n = _normalize_street(street)
+    try:
+        num = str(int(float(number)))
+    except (ValueError, TypeError):
+        num = ""
+    return f"{n}|{num}"
+
+
+def load_smul(local_file: str | None = None) -> pd.DataFrame:
+    """Load SMUL heliport license data (Autos de Licença de Funcionamento)."""
+
+    df: pd.DataFrame | None = None
+
+    # --- Try local file first ---
+    if local_file and Path(local_file).exists():
+        log.info("Loading SMUL data from local file: %s", local_file)
+        try:
+            df = pd.read_excel(local_file)
+        except Exception as exc:
+            log.warning("Failed to read local SMUL file: %s", exc)
+
+    # --- Try download ---
+    if df is None:
+        log.info("Downloading SMUL license spreadsheet...")
+        resp = _download_with_retries(SMUL_XLSX_URL, timeout=30)
+        if resp and resp.status_code == 200:
+            try:
+                df = pd.read_excel(io.BytesIO(resp.content))
+            except Exception as exc:
+                log.warning("Failed to parse SMUL XLSX: %s", exc)
+
+    if df is None or df.empty:
+        log.warning(
+            "Could not load SMUL data. "
+            "Place 'smul_helipontos.xlsx' locally and re-run."
+        )
+        return pd.DataFrame()
+
+    # --- Rename columns ---
+    col_map = {
+        "NOME DO HELIPONTO": "smul_nome",
+        "PROPRIETÁRIO": "smul_proprietario",
+        "ENDEREÇO": "smul_endereco",
+        "NÚMERO": "smul_numero",
+        "COMPL. / BAIRRO": "smul_bairro",
+        "VALIDADE AUTO": "smul_validade",
+        "Nº AUTO LICENÇA": "smul_auto",
+        "Processo": "smul_processo",
+    }
+    df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+    # --- License validity ---
+    if "smul_validade" in df.columns:
+        df["smul_validade"] = pd.to_datetime(df["smul_validade"], errors="coerce")
+        df["smul_vigente"] = df["smul_validade"] >= pd.Timestamp.now()
+    else:
+        df["smul_vigente"] = True
+
+    # --- Build address key for matching ---
+    df["_smul_addr_key"] = df.apply(
+        lambda r: _addr_key(
+            str(r.get("smul_endereco", "")), r.get("smul_numero")
+        ),
+        axis=1,
+    )
+    df["_smul_street"] = df["smul_endereco"].apply(_normalize_street)
+
+    log.info("SMUL data loaded: %d licensed heliports", len(df))
+    return df
+
+
+def merge_smul(
+    gdf: gpd.GeoDataFrame, df_smul: pd.DataFrame
+) -> gpd.GeoDataFrame:
+    """Match SMUL license data to the joined GeoSampa/ANAC dataset by address."""
+
+    smul_cols = [
+        "smul_nome",
+        "smul_auto",
+        "smul_validade",
+        "smul_vigente",
+        "smul_proprietario",
+    ]
+    if df_smul.empty:
+        for col in smul_cols:
+            gdf[col] = None
+        gdf["smul_licenciado"] = False
+        return gdf
+
+    # --- Build address keys for the joined dataset ---
+    def _gs_addr_key(row):
+        endereco = str(row.get("gs_endereco", "") or "")
+        # gs_endereco format: "Avenida Brigadeiro Faria Lima, 3729.0"
+        if "," in endereco:
+            street = endereco.rsplit(",", 1)[0].strip()
+            num_str = endereco.rsplit(",", 1)[1].strip()
+        else:
+            street = endereco
+            num_str = ""
+        # Prefer raw number column if available
+        raw_num = row.get("nr_endereco_heliponto")
+        if pd.notna(raw_num):
+            num_str = raw_num
+        return _addr_key(street, num_str if num_str else None)
+
+    gdf["_gs_addr_key"] = gdf.apply(_gs_addr_key, axis=1)
+    gdf["_gs_street"] = gdf["_gs_addr_key"].apply(lambda k: k.split("|")[0])
+
+    # --- Build SMUL lookups ---
+    smul_by_key: dict[str, pd.Series] = {}
+    smul_by_street: dict[str, list[pd.Series]] = {}
+    for _, row in df_smul.iterrows():
+        key = row["_smul_addr_key"]
+        street = row["_smul_street"]
+        if key and key != "|":
+            smul_by_key[key] = row
+        if street:
+            smul_by_street.setdefault(street, []).append(row)
+
+    # --- Initialise columns ---
+    for col in smul_cols:
+        gdf[col] = None
+    gdf["smul_licenciado"] = False
+
+    matched_smul_keys: set[str] = set()
+
+    # --- Pass 1: exact address key match (street + number) ---
+    for idx, row in gdf.iterrows():
+        key = row["_gs_addr_key"]
+        if key in smul_by_key and key not in matched_smul_keys:
+            smul_row = smul_by_key[key]
+            for col in smul_cols:
+                if col in smul_row.index:
+                    gdf.at[idx, col] = smul_row[col]
+            gdf.at[idx, "smul_licenciado"] = True
+            matched_smul_keys.add(key)
+
+    # --- Pass 2: same street, closest number (within 500) ---
+    for idx, row in gdf.iterrows():
+        if gdf.at[idx, "smul_licenciado"]:
+            continue
+        gs_street = row["_gs_street"]
+        gs_num_str = row["_gs_addr_key"].split("|")[1]
+        if not gs_street or gs_street not in smul_by_street:
+            continue
+        try:
+            gs_num = int(gs_num_str) if gs_num_str else 0
+        except ValueError:
+            gs_num = 0
+        best_row = None
+        best_diff = float("inf")
+        for smul_row in smul_by_street[gs_street]:
+            sk = smul_row["_smul_addr_key"]
+            if sk in matched_smul_keys:
+                continue
+            smul_num_str = sk.split("|")[1]
+            try:
+                smul_num = int(smul_num_str) if smul_num_str else 0
+            except ValueError:
+                smul_num = 0
+            diff = abs(gs_num - smul_num)
+            if diff < best_diff:
+                best_diff = diff
+                best_row = smul_row
+        if best_row is not None and best_diff <= 500:
+            for col in smul_cols:
+                if col in best_row.index:
+                    gdf.at[idx, col] = best_row[col]
+            gdf.at[idx, "smul_licenciado"] = True
+            matched_smul_keys.add(best_row["_smul_addr_key"])
+
+    # --- Pass 3: partial street name containment ---
+    unmatched_streets = {
+        row["_smul_street"]: row
+        for _, row in df_smul.iterrows()
+        if row["_smul_addr_key"] not in matched_smul_keys and row["_smul_street"]
+    }
+    for idx, row in gdf.iterrows():
+        if gdf.at[idx, "smul_licenciado"]:
+            continue
+        gs_street = row["_gs_street"]
+        if not gs_street:
+            continue
+        for smul_street, smul_row in list(unmatched_streets.items()):
+            if smul_row["_smul_addr_key"] in matched_smul_keys:
+                continue
+            if smul_street in gs_street or gs_street in smul_street:
+                for col in smul_cols:
+                    if col in smul_row.index:
+                        gdf.at[idx, col] = smul_row[col]
+                gdf.at[idx, "smul_licenciado"] = True
+                matched_smul_keys.add(smul_row["_smul_addr_key"])
+                break
+
+    n_matched = int(gdf["smul_licenciado"].sum())
+    n_smul_unmatched = len(df_smul) - len(matched_smul_keys)
+    log.info(
+        "SMUL matching: %d dataset records matched, %d SMUL records unmatched",
+        n_matched,
+        n_smul_unmatched,
+    )
+
+    # Log unmatched SMUL records for manual review
+    if n_smul_unmatched > 0:
+        for _, row in df_smul.iterrows():
+            if row["_smul_addr_key"] not in matched_smul_keys:
+                log.debug(
+                    "  SMUL unmatched: %s (%s)",
+                    row.get("smul_nome", "?"),
+                    row["_smul_addr_key"],
+                )
+
+    # --- Clean up temp columns ---
+    gdf = gdf.drop(columns=["_gs_addr_key", "_gs_street"], errors="ignore")
+
+    return gdf
+
+
+# ---------------------------------------------------------------------------
+# 5. Spatial join & status consolidation
 # ---------------------------------------------------------------------------
 
 
@@ -543,10 +821,19 @@ def spatial_join(
 
     # --- 3. Assign consolidated status ---
     def _status(row):
-        if pd.isna(row.get("dist_metros")):
+        has_anac = pd.notna(row.get("dist_metros"))
+        anac_ativo = row.get("anac_ativo", True)
+        has_smul = bool(row.get("smul_licenciado", False))
+        smul_vigente = bool(row.get("smul_vigente", False))
+
+        if not has_anac:
             return "NÃO_CADASTRADO_ANAC"
-        if not row.get("anac_ativo", True):
+        if not anac_ativo:
             return "DIVERGENTE_ANAC_INATIVO"
+        if has_smul and not smul_vigente:
+            return "LICENÇA_SMUL_VENCIDA"
+        if not has_smul:
+            return "SEM_LICENÇA_SMUL"
         return "REGULAR"
 
     joined["status_consolidado"] = joined.apply(_status, axis=1)
@@ -582,6 +869,8 @@ STATUS_COLORS = {
     "DIVERGENTE_ANAC_INATIVO": "#e67e22",
     "NÃO_CADASTRADO_ANAC": "#e74c3c",
     "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
+    "SEM_LICENÇA_SMUL": "#c0392b",
+    "LICENÇA_SMUL_VENCIDA": "#d35400",
 }
 
 # Statuses considered irregular
@@ -589,6 +878,8 @@ IRREGULAR_STATUSES = {
     "DIVERGENTE_ANAC_INATIVO",
     "NÃO_CADASTRADO_ANAC",
     "NÃO_CADASTRADO_PREFEITURA",
+    "SEM_LICENÇA_SMUL",
+    "LICENÇA_SMUL_VENCIDA",
 }
 
 
@@ -598,6 +889,8 @@ def _irregular_label(status: str) -> str:
         "DIVERGENTE_ANAC_INATIVO": "IRREGULAR — ANAC inativo",
         "NÃO_CADASTRADO_ANAC": "IRREGULAR — Sem cadastro na ANAC",
         "NÃO_CADASTRADO_PREFEITURA": "IRREGULAR — Sem cadastro na Prefeitura",
+        "SEM_LICENÇA_SMUL": "IRREGULAR — Sem licença SMUL",
+        "LICENÇA_SMUL_VENCIDA": "IRREGULAR — Licença SMUL vencida",
     }
     return labels.get(status, status)
 
@@ -651,10 +944,12 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
 
     # --- Feature groups for layer control ---
     STATUS_LABELS = {
-        "REGULAR": "\u2705 Regular (ambas bases)",
+        "REGULAR": "\u2705 Regular (ANAC + SMUL)",
         "DIVERGENTE_ANAC_INATIVO": "\u26a0\ufe0f IRREGULAR — ANAC inativo",
         "NÃO_CADASTRADO_ANAC": "\u274c IRREGULAR — Sem cadastro ANAC",
         "NÃO_CADASTRADO_PREFEITURA": "\u274c IRREGULAR — Sem cadastro Prefeitura",
+        "SEM_LICENÇA_SMUL": "\u274c IRREGULAR — Sem licença SMUL",
+        "LICENÇA_SMUL_VENCIDA": "\u26a0\ufe0f IRREGULAR — Licença SMUL vencida",
     }
     groups = {}
     for status_key, label in STATUS_LABELS.items():
@@ -703,7 +998,27 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
             f"<b>Status:</b> <span style='color:{color};font-weight:bold'>"
             f"{status}</span><br>"
         )
-        popup_parts.append(f"<b>Situação Prefeitura:</b> {situacao_gs}<br>")
+        popup_parts.append(f"<b>Situação GeoSampa:</b> {situacao_gs}<br>")
+        smul_lic = row.get("smul_licenciado", False)
+        if smul_lic:
+            smul_auto = row.get("smul_auto") or "\u2014"
+            smul_val = row.get("smul_validade")
+            smul_val_str = (
+                smul_val.strftime("%d/%m/%Y") if pd.notna(smul_val) else "\u2014"
+            )
+            smul_vig = row.get("smul_vigente", False)
+            vig_color = "#2ecc71" if smul_vig else "#e74c3c"
+            vig_text = "Vigente" if smul_vig else "Vencida"
+            popup_parts.append(
+                f"<b>Auto SMUL:</b> {smul_auto} "
+                f"(<span style='color:{vig_color}'>{vig_text}</span> "
+                f"até {smul_val_str})<br>"
+            )
+        else:
+            popup_parts.append(
+                "<b>Auto SMUL:</b> "
+                "<span style='color:#e74c3c'>Não encontrado</span><br>"
+            )
         if endereco:
             popup_parts.append(f"<b>Endereço:</b> {endereco}<br>")
         if distrito:
@@ -790,26 +1105,36 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     n_no_anac = len(gdf[gdf["status_consolidado"] == "NÃO_CADASTRADO_ANAC"])
     n_no_pref = len(gdf[gdf["status_consolidado"] == "NÃO_CADASTRADO_PREFEITURA"])
     n_inativo = len(gdf[gdf["status_consolidado"] == "DIVERGENTE_ANAC_INATIVO"])
+    n_sem_smul = len(gdf[gdf["status_consolidado"] == "SEM_LICENÇA_SMUL"])
+    n_smul_venc = len(gdf[gdf["status_consolidado"] == "LICENÇA_SMUL_VENCIDA"])
 
     # Legend with clear irregular section
     legend_html = f"""
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000;
          background: rgba(0,0,0,0.85); padding: 14px 18px; border-radius: 10px;
          box-shadow: 0 4px 12px rgba(0,0,0,0.6); font-size: 13px;
-         font-family: Arial, sans-serif; color: white; max-width: 320px;">
+         font-family: Arial, sans-serif; color: white; max-width: 340px;">
       <b style="font-size:15px">Helipontos de São Paulo</b><br>
-      <span style="font-size:11px;color:#aaa">Total: {n_total} &nbsp;|&nbsp;
+      <span style="font-size:11px;color:#aaa">
+        Fontes: ANAC + GeoSampa + SMUL<br>
+        Total: {n_total} &nbsp;|&nbsp;
         Regulares: {n_regular} &nbsp;|&nbsp;
         <span style="color:#ff6b6b">Irregulares: {n_irregular}</span></span>
       <hr style="border-color:#555;margin:8px 0">
 
       <i style="background:#2ecc71;width:12px;height:12px;display:inline-block;
          border-radius:50%;margin-right:6px;border:1px solid white;"></i>
-      <b>Regular</b> — ANAC + Prefeitura ({n_regular})<br>
+      <b>Regular</b> — ANAC ativo + Licença SMUL ({n_regular})<br>
 
       <hr style="border-color:#555;margin:8px 0">
       <b style="color:#ff6b6b;font-size:13px">\u26a0 IRREGULARES</b><br>
       <div style="margin-top:4px">
+        <i style="background:#c0392b;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #c0392b;"></i>
+        Sem <b>licença SMUL</b> ({n_sem_smul})<br>
+        <i style="background:#d35400;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #d35400;"></i>
+        Licença SMUL <b>vencida</b> ({n_smul_venc})<br>
         <i style="background:#e74c3c;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #e74c3c;"></i>
         Sem cadastro na <b>ANAC</b> ({n_no_anac})<br>
@@ -847,6 +1172,11 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "anac_oaci",
         "anac_ciad",
         "anac_ativo",
+        "smul_licenciado",
+        "smul_nome",
+        "smul_auto",
+        "smul_validade",
+        "smul_vigente",
         "status_consolidado",
         "dist_metros",
     ]
@@ -900,6 +1230,14 @@ def main():
         help="Output CSV path (default: comparativo_helipontos_sp.csv).",
     )
     parser.add_argument(
+        "--smul-file",
+        default=None,
+        help=(
+            "Path to a local SMUL XLSX file with Autos de Licença. "
+            "If omitted the script tries to download from the Prefeitura portal."
+        ),
+    )
+    parser.add_argument(
         "--output-map",
         default=OUTPUT_MAP,
         help="Output HTML map path (default: mapa_helipontos_sp.html).",
@@ -930,18 +1268,56 @@ def main():
                 geosampa_local = candidate
                 break
 
+    smul_local = args.smul_file
+    if not smul_local:
+        for candidate in ["smul_helipontos.xlsx", "smul_helipontos.xls"]:
+            if Path(candidate).exists():
+                smul_local = candidate
+                break
+
     log.info("=" * 60)
-    log.info("Helipontos SP — GeoSampa × ANAC")
+    log.info("Helipontos SP — GeoSampa × ANAC × SMUL")
     log.info("=" * 60)
 
-    # Step 1–2: Load and clean data
+    # Step 1–3: Load and clean data
     gdf_anac = load_anac(local_csv=anac_local)
     gdf_geosampa = load_geosampa(local_file=geosampa_local)
+    df_smul = load_smul(local_file=smul_local)
 
-    # Step 3: Spatial join
+    # Step 4: Spatial join GeoSampa × ANAC
     gdf_result = spatial_join(gdf_geosampa, gdf_anac, buffer_m=args.buffer)
 
-    # Step 4: Outputs
+    # Step 5: Match SMUL license data
+    gdf_result = merge_smul(gdf_result, df_smul)
+
+    # Step 6: Re-evaluate status with SMUL data
+    def _final_status(row):
+        has_anac = pd.notna(row.get("dist_metros"))
+        anac_ativo = row.get("anac_ativo", True)
+        has_smul = bool(row.get("smul_licenciado", False))
+        smul_vigente = bool(row.get("smul_vigente", False))
+
+        if not has_anac:
+            return "NÃO_CADASTRADO_ANAC"
+        if not anac_ativo:
+            return "DIVERGENTE_ANAC_INATIVO"
+        if has_smul and not smul_vigente:
+            return "LICENÇA_SMUL_VENCIDA"
+        if not has_smul:
+            return "SEM_LICENÇA_SMUL"
+        return "REGULAR"
+
+    # Only re-evaluate records that came from GeoSampa (not ANAC-only)
+    mask_gs = gdf_result["status_consolidado"] != "NÃO_CADASTRADO_PREFEITURA"
+    gdf_result.loc[mask_gs, "status_consolidado"] = gdf_result.loc[mask_gs].apply(
+        _final_status, axis=1
+    )
+
+    log.info("Final status breakdown:")
+    for status, count in gdf_result["status_consolidado"].value_counts().items():
+        log.info("  %s: %d", status, count)
+
+    # Step 7: Outputs
     build_map(gdf_result, output_path=args.output_map)
     export_csv(gdf_result, output_path=args.output_csv)
 
