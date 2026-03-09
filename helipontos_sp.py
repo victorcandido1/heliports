@@ -584,6 +584,23 @@ STATUS_COLORS = {
     "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
 }
 
+# Statuses considered irregular
+IRREGULAR_STATUSES = {
+    "DIVERGENTE_ANAC_INATIVO",
+    "NÃO_CADASTRADO_ANAC",
+    "NÃO_CADASTRADO_PREFEITURA",
+}
+
+
+def _irregular_label(status: str) -> str:
+    """Return a human-readable irregularity description."""
+    labels = {
+        "DIVERGENTE_ANAC_INATIVO": "IRREGULAR — ANAC inativo",
+        "NÃO_CADASTRADO_ANAC": "IRREGULAR — Sem cadastro na ANAC",
+        "NÃO_CADASTRADO_PREFEITURA": "IRREGULAR — Sem cadastro na Prefeitura",
+    }
+    return labels.get(status, status)
+
 
 def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     """Create an interactive Folium map of heliport statuses."""
@@ -614,16 +631,33 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     ).add_to(m)
     folium.TileLayer("CartoDB positron", name="Mapa claro").add_to(m)
 
+    # --- Pulsing CSS for irregular markers ---
+    pulse_css = """
+    <style>
+    @keyframes pulse-ring {
+        0%   { transform: scale(1);   opacity: 0.8; }
+        50%  { transform: scale(1.6); opacity: 0; }
+        100% { transform: scale(1);   opacity: 0; }
+    }
+    .irregular-pulse {
+        position: absolute;
+        border-radius: 50%;
+        animation: pulse-ring 2s ease-out infinite;
+        pointer-events: none;
+    }
+    </style>
+    """
+    m.get_root().html.add_child(folium.Element(pulse_css))
+
     # --- Feature groups for layer control ---
     STATUS_LABELS = {
-        "REGULAR": "Regular (ambas bases)",
-        "DIVERGENTE_ANAC_INATIVO": "ANAC inativo",
-        "NÃO_CADASTRADO_ANAC": "Sem cadastro ANAC",
-        "NÃO_CADASTRADO_PREFEITURA": "Sem cadastro Prefeitura",
+        "REGULAR": "\u2705 Regular (ambas bases)",
+        "DIVERGENTE_ANAC_INATIVO": "\u26a0\ufe0f IRREGULAR — ANAC inativo",
+        "NÃO_CADASTRADO_ANAC": "\u274c IRREGULAR — Sem cadastro ANAC",
+        "NÃO_CADASTRADO_PREFEITURA": "\u274c IRREGULAR — Sem cadastro Prefeitura",
     }
     groups = {}
     for status_key, label in STATUS_LABELS.items():
-        color = STATUS_COLORS.get(status_key, "gray")
         count = len(gdf[gdf["status_consolidado"] == status_key])
         fg = folium.FeatureGroup(name=f"{label} ({count})", show=True)
         groups[status_key] = fg
@@ -636,62 +670,106 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         lat, lon = geom.y, geom.x
         status = row.get("status_consolidado", "UNKNOWN")
         color = STATUS_COLORS.get(status, "gray")
+        is_irregular = status in IRREGULAR_STATUSES
 
         nome = row.get("gs_nome") or row.get("anac_nome") or "Sem nome"
         oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
-        oaci_display = oaci if (isinstance(oaci, str) and oaci.strip()) else "—"
+        oaci_display = oaci if (isinstance(oaci, str) and oaci.strip()) else "\u2014"
         ciad = row.get("anac_ciad") or ""
         dist = row.get("dist_metros")
-        dist_str = f"{dist:.0f}m" if pd.notna(dist) else "—"
+        dist_str = f"{dist:.0f}m" if pd.notna(dist) else "\u2014"
         endereco = row.get("gs_endereco") or ""
-        situacao_gs = row.get("gs_situacao") or "—"
+        situacao_gs = row.get("gs_situacao") or "\u2014"
         distrito = row.get("nm_distrito_municipal") or ""
 
-        popup_html = (
-            f"<div style='font-family:Arial,sans-serif;font-size:12px;min-width:220px'>"
-            f"<b style='font-size:14px'>{nome}</b><br>"
-            f"<hr style='margin:4px 0'>"
-            f"<b>OACI:</b> {oaci_display}<br>"
-            f"<b>CIAD:</b> {ciad}<br>"
+        # Build popup — irregular gets a prominent banner
+        popup_parts = []
+        popup_parts.append(
+            "<div style='font-family:Arial,sans-serif;font-size:12px;min-width:250px'>"
+        )
+        if is_irregular:
+            irreg_label = _irregular_label(status)
+            popup_parts.append(
+                f"<div style='background:{color};color:white;padding:6px 10px;"
+                f"margin:-12px -12px 8px -12px;border-radius:4px 4px 0 0;"
+                f"font-weight:bold;font-size:13px;text-align:center'>"
+                f"\u26a0 {irreg_label}</div>"
+            )
+        popup_parts.append(f"<b style='font-size:14px'>{nome}</b><br>")
+        popup_parts.append("<hr style='margin:4px 0'>")
+        popup_parts.append(f"<b>OACI:</b> {oaci_display}<br>")
+        popup_parts.append(f"<b>CIAD:</b> {ciad}<br>")
+        popup_parts.append(
             f"<b>Status:</b> <span style='color:{color};font-weight:bold'>"
             f"{status}</span><br>"
-            f"<b>Situação Prefeitura:</b> {situacao_gs}<br>"
         )
+        popup_parts.append(f"<b>Situação Prefeitura:</b> {situacao_gs}<br>")
         if endereco:
-            popup_html += f"<b>Endereço:</b> {endereco}<br>"
+            popup_parts.append(f"<b>Endereço:</b> {endereco}<br>")
         if distrito:
-            popup_html += f"<b>Distrito:</b> {distrito}<br>"
-        popup_html += (
+            popup_parts.append(f"<b>Distrito:</b> {distrito}<br>")
+        popup_parts.append(
             f"<b>Distância match:</b> {dist_str}<br>"
             f"<b>Coord:</b> {lat:.5f}, {lon:.5f}"
-            f"</div>"
+            "</div>"
         )
+        popup_html = "".join(popup_parts)
 
         fg = groups.get(status, list(groups.values())[0])
 
-        # Circle marker
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=8,
-            color="white",
-            weight=2,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.9,
-            popup=folium.Popup(popup_html, max_width=320),
-            tooltip=f"{oaci_display} — {nome}",
-        ).add_to(fg)
+        # Irregular markers: larger, with a pulsing ring and bold border
+        if is_irregular:
+            # Pulsing outer ring via DivIcon
+            folium.Marker(
+                location=[lat, lon],
+                icon=folium.DivIcon(
+                    icon_size=(36, 36),
+                    icon_anchor=(18, 18),
+                    html=(
+                        f"<div class='irregular-pulse' style='"
+                        f"width:36px;height:36px;"
+                        f"border:3px solid {color};'></div>"
+                    ),
+                ),
+            ).add_to(fg)
+
+            # Main marker — larger for irregulars
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=11,
+                color=color,
+                weight=3,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.9,
+                popup=folium.Popup(popup_html, max_width=350),
+                tooltip=f"\u26a0 IRREGULAR — {oaci_display} — {nome}",
+            ).add_to(fg)
+        else:
+            # Regular marker — smaller, subtler
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=7,
+                color="white",
+                weight=1.5,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.85,
+                popup=folium.Popup(popup_html, max_width=350),
+                tooltip=f"{oaci_display} — {nome}",
+            ).add_to(fg)
 
         # ICAO label (DivIcon)
         if isinstance(oaci, str) and oaci.strip():
+            label_color = "white" if not is_irregular else color
             folium.Marker(
                 location=[lat, lon],
                 icon=folium.DivIcon(
                     icon_size=(0, 0),
-                    icon_anchor=(0, -12),
+                    icon_anchor=(0, -14),
                     html=(
                         f"<div style='"
-                        f"font-size:9px;font-weight:bold;color:white;"
+                        f"font-size:9px;font-weight:bold;color:{label_color};"
                         f"text-shadow:1px 1px 2px black,-1px -1px 2px black,"
                         f"1px -1px 2px black,-1px 1px 2px black;"
                         f"white-space:nowrap;pointer-events:none;"
@@ -705,21 +783,43 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
 
     folium.LayerControl(collapsed=False).add_to(m)
 
-    # Legend
-    legend_html = """
+    # Summary stats for legend
+    n_total = len(gdf)
+    n_regular = len(gdf[gdf["status_consolidado"] == "REGULAR"])
+    n_irregular = n_total - n_regular
+    n_no_anac = len(gdf[gdf["status_consolidado"] == "NÃO_CADASTRADO_ANAC"])
+    n_no_pref = len(gdf[gdf["status_consolidado"] == "NÃO_CADASTRADO_PREFEITURA"])
+    n_inativo = len(gdf[gdf["status_consolidado"] == "DIVERGENTE_ANAC_INATIVO"])
+
+    # Legend with clear irregular section
+    legend_html = f"""
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000;
-         background: rgba(0,0,0,0.75); padding: 12px 16px; border-radius: 8px;
-         box-shadow: 0 2px 6px rgba(0,0,0,0.5); font-size: 13px;
-         font-family: Arial, sans-serif; color: white;">
-      <b>Status do Heliponto</b><br>
+         background: rgba(0,0,0,0.85); padding: 14px 18px; border-radius: 10px;
+         box-shadow: 0 4px 12px rgba(0,0,0,0.6); font-size: 13px;
+         font-family: Arial, sans-serif; color: white; max-width: 320px;">
+      <b style="font-size:15px">Helipontos de São Paulo</b><br>
+      <span style="font-size:11px;color:#aaa">Total: {n_total} &nbsp;|&nbsp;
+        Regulares: {n_regular} &nbsp;|&nbsp;
+        <span style="color:#ff6b6b">Irregulares: {n_irregular}</span></span>
+      <hr style="border-color:#555;margin:8px 0">
+
       <i style="background:#2ecc71;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Regular (ANAC + Prefeitura)<br>
-      <i style="background:#e67e22;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;border:1px solid white;"></i> ANAC inativo<br>
-      <i style="background:#e74c3c;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Sem cadastro na ANAC<br>
-      <i style="background:#9b59b6;width:12px;height:12px;display:inline-block;
-         border-radius:50%;margin-right:6px;border:1px solid white;"></i> Sem cadastro na Prefeitura<br>
+         border-radius:50%;margin-right:6px;border:1px solid white;"></i>
+      <b>Regular</b> — ANAC + Prefeitura ({n_regular})<br>
+
+      <hr style="border-color:#555;margin:8px 0">
+      <b style="color:#ff6b6b;font-size:13px">\u26a0 IRREGULARES</b><br>
+      <div style="margin-top:4px">
+        <i style="background:#e74c3c;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #e74c3c;"></i>
+        Sem cadastro na <b>ANAC</b> ({n_no_anac})<br>
+        <i style="background:#9b59b6;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #9b59b6;"></i>
+        Sem cadastro na <b>Prefeitura</b> ({n_no_pref})<br>
+        <i style="background:#e67e22;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #e67e22;"></i>
+        <b>ANAC inativo</b> ({n_inativo})<br>
+      </div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
