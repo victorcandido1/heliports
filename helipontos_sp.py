@@ -291,24 +291,35 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
     if status_col:
         rename[status_col] = "anac_status_raw"
 
+    # Always expose the validade column as anac_validade
+    val_col = col_map.get("validade")
+    if val_col and val_col not in rename:
+        rename[val_col] = "anac_validade"
+
     gdf = gdf.rename(columns=rename)
 
-    # Derive active/inactive flag
+    # Parse anac_validade as datetime
+    if "anac_validade" in gdf.columns:
+        gdf["anac_validade"] = pd.to_datetime(
+            gdf["anac_validade"].astype(str).str.replace(r"Z$", "", regex=True),
+            errors="coerce",
+        )
+    elif val_col and val_col in rename.values():
+        # validade was used as anac_status_raw — copy it to anac_validade too
+        gdf["anac_validade"] = pd.to_datetime(
+            gdf["anac_status_raw"].astype(str).str.replace(r"Z$", "", regex=True),
+            errors="coerce",
+        )
+
+    # Derive active/inactive flag from Operação status only.
+    # Note: "Validade do Registro" often shows the registration/renewal date
+    # rather than an expiration — the ANAC Operação field is the reliable
+    # source for active/inactive status.
     gdf["anac_ativo"] = True  # default
     if "anac_status_raw" in gdf.columns:
         gdf["anac_ativo"] = ~gdf["anac_status_raw"].astype(str).str.upper().str.contains(
             "INATIV|CANCEL|REVOG|VENCID", na=False
         )
-    # Also check registration validity date if available
-    if col_map.get("validade") and col_map["validade"] not in rename:
-        try:
-            validade = pd.to_datetime(
-                gdf[col_map["validade"]], dayfirst=True, errors="coerce"
-            )
-            expired = validade < pd.Timestamp.now()
-            gdf.loc[expired, "anac_ativo"] = False
-        except Exception:
-            pass
 
     log.info("ANAC GeoDataFrame ready: %d features", len(gdf))
     return gdf
@@ -1066,6 +1077,16 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         popup_parts.append("<hr style='margin:4px 0'>")
         popup_parts.append(f"<b>OACI:</b> {oaci_display}<br>")
         popup_parts.append(f"<b>CIAD:</b> {ciad}<br>")
+        anac_val = row.get("anac_validade")
+        if pd.notna(anac_val):
+            anac_val_str = anac_val.strftime("%d/%m/%Y") if hasattr(anac_val, "strftime") else str(anac_val)[:10]
+            anac_ativo = row.get("anac_ativo", True)
+            av_color = "#2ecc71" if anac_ativo else "#e74c3c"
+            av_text = "Vigente" if anac_ativo else "Vencido"
+            popup_parts.append(
+                f"<b>Registro ANAC:</b> {anac_val_str} "
+                f"(<span style='color:{av_color}'>{av_text}</span>)<br>"
+            )
         popup_parts.append(
             f"<b>Status:</b> <span style='color:{color};font-weight:bold'>"
             f"{status}</span><br>"
@@ -1243,6 +1264,7 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "anac_nome",
         "anac_oaci",
         "anac_ciad",
+        "anac_validade",
         "anac_ativo",
         "smul_licenciado",
         "smul_nome",
