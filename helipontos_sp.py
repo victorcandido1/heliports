@@ -978,6 +978,200 @@ def _irregular_label(status: str) -> str:
     return labels.get(status, status)
 
 
+def _fmt(val, fmt_date=False):
+    """Format a value for popup display; return None if empty/NaN."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "nat", "none"):
+        return None
+    if fmt_date and hasattr(val, "strftime"):
+        return val.strftime("%d/%m/%Y")
+    return s
+
+
+def _build_popup_html(row, lat, lon, status, color, is_irregular):
+    """Build a rich HTML popup with all available heliport data."""
+    nome = row.get("gs_nome") or row.get("anac_nome") or "Sem nome"
+    oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
+    oaci_display = oaci if (isinstance(oaci, str) and oaci.strip()) else "\u2014"
+    ciad = _fmt(row.get("anac_ciad"))
+    dist = row.get("dist_metros")
+    dist_str = f"{dist:.0f}m" if pd.notna(dist) else None
+    endereco = _fmt(row.get("gs_endereco"))
+    distrito = _fmt(row.get("nm_distrito_municipal"))
+
+    p = []  # popup parts
+    p.append(
+        "<div style='font-family:Arial,sans-serif;font-size:12px;"
+        "min-width:280px;max-width:380px'>"
+    )
+
+    # --- Banner for irregulars ---
+    if is_irregular:
+        irreg_label = _irregular_label(status)
+        p.append(
+            f"<div style='background:{color};color:white;padding:6px 10px;"
+            f"margin:-12px -12px 8px -12px;border-radius:4px 4px 0 0;"
+            f"font-weight:bold;font-size:13px;text-align:center'>"
+            f"\u26a0 {irreg_label}</div>"
+        )
+
+    p.append(f"<b style='font-size:14px'>{nome}</b><br>")
+
+    # ── SECTION: Identificação ──
+    p.append("<hr style='margin:4px 0'>")
+    p.append("<b style='color:#3498db;font-size:11px'>"
+             "\u2708 IDENTIFICA\u00c7\u00c3O</b><br>")
+    p.append(f"<b>OACI:</b> {oaci_display}<br>")
+    if ciad:
+        p.append(f"<b>CIAD:</b> {ciad}<br>")
+    p.append(
+        f"<b>Status consolidado:</b> "
+        f"<span style='color:{color};font-weight:bold'>{status}</span><br>"
+    )
+
+    # ── SECTION: ANAC (Federal) ──
+    anac_nome = _fmt(row.get("anac_nome"))
+    anac_ativo = row.get("anac_ativo", True)
+    anac_val = row.get("anac_validade")
+    anac_operacao = _fmt(row.get("anac_status_raw"))
+    has_anac = anac_nome or _fmt(row.get("anac_oaci"))
+    if has_anac:
+        p.append("<hr style='margin:4px 0'>")
+        p.append("<b style='color:#2980b9;font-size:11px'>"
+                 "\U0001f6e9 ANAC (Federal)</b><br>")
+        if anac_nome:
+            p.append(f"<b>Nome ANAC:</b> {anac_nome}<br>")
+        if anac_operacao:
+            p.append(f"<b>Opera\u00e7\u00e3o:</b> {anac_operacao}<br>")
+        ativo_color = "#2ecc71" if anac_ativo else "#e74c3c"
+        ativo_text = "Ativo" if anac_ativo else "Inativo"
+        p.append(
+            f"<b>Situa\u00e7\u00e3o ANAC:</b> "
+            f"<span style='color:{ativo_color};font-weight:bold'>"
+            f"{ativo_text}</span><br>"
+        )
+        if pd.notna(anac_val):
+            anac_val_str = _fmt(anac_val, fmt_date=True) or str(anac_val)[:10]
+            p.append(f"<b>Validade registro:</b> {anac_val_str}<br>")
+    else:
+        p.append("<hr style='margin:4px 0'>")
+        p.append(
+            "<b style='color:#e74c3c;font-size:11px'>"
+            "\U0001f6e9 ANAC:</b> "
+            "<span style='color:#e74c3c'>Sem cadastro</span><br>"
+        )
+
+    # ── SECTION: GeoSampa (Prefeitura) ──
+    gs_nome = _fmt(row.get("gs_nome"))
+    gs_situacao = _fmt(row.get("gs_situacao"))
+    gs_processo = _fmt(row.get("cd_processo_administrativo_heliponto"))
+    gs_parecer = _fmt(row.get("cd_parecer_tecnico"))
+    gs_decont = _fmt(row.get("cd_parecer_decont"))
+    gs_pub_doc = row.get("dt_publicacao_diario_oficial")
+    gs_link_doc = _fmt(row.get("tx_link_diario_oficial"))
+    gs_ciclo_diurno = _fmt(row.get("qt_ciclo_diurno"))
+    gs_ciclo_vesp = _fmt(row.get("qt_ciclo_vespertino"))
+    gs_ciclo_total = _fmt(row.get("qt_total_ciclo_permitido"))
+    gs_obs = _fmt(row.get("tx_observacao_heliponto"))
+
+    has_gs = gs_nome is not None
+    if has_gs:
+        p.append("<hr style='margin:4px 0'>")
+        p.append("<b style='color:#27ae60;font-size:11px'>"
+                 "\U0001f3db GeoSampa (Prefeitura)</b><br>")
+        if gs_situacao:
+            sit_color = "#2ecc71" if "Deferido" in gs_situacao else "#e74c3c"
+            p.append(
+                f"<b>Parecer:</b> "
+                f"<span style='color:{sit_color}'>{gs_situacao}</span><br>"
+            )
+        if gs_processo:
+            p.append(f"<b>Processo:</b> {gs_processo}<br>")
+        if gs_parecer:
+            p.append(f"<b>Parecer t\u00e9cnico:</b> {gs_parecer}<br>")
+        if gs_decont:
+            p.append(f"<b>Parecer DECONT:</b> {gs_decont}<br>")
+        if pd.notna(gs_pub_doc):
+            doc_str = _fmt(gs_pub_doc, fmt_date=True) or str(gs_pub_doc)[:10]
+            if gs_link_doc:
+                p.append(
+                    f"<b>DOC:</b> <a href='{gs_link_doc}' target='_blank'>"
+                    f"{doc_str}</a><br>"
+                )
+            else:
+                p.append(f"<b>Publica\u00e7\u00e3o DOC:</b> {doc_str}<br>")
+        if gs_ciclo_total:
+            ciclos = f"Total: {gs_ciclo_total}"
+            if gs_ciclo_diurno:
+                ciclos += f" (Diurno: {gs_ciclo_diurno}"
+                if gs_ciclo_vesp:
+                    ciclos += f", Vespertino: {gs_ciclo_vesp}"
+                ciclos += ")"
+            p.append(f"<b>Ciclos permitidos:</b> {ciclos}<br>")
+        if gs_obs:
+            p.append(
+                f"<b>Obs:</b> <i style='font-size:11px'>{gs_obs}</i><br>"
+            )
+    else:
+        p.append("<hr style='margin:4px 0'>")
+        p.append(
+            "<b style='color:#e74c3c;font-size:11px'>"
+            "\U0001f3db GeoSampa:</b> "
+            "<span style='color:#e74c3c'>Sem cadastro</span><br>"
+        )
+
+    # ── SECTION: SMUL (Licença Municipal) ──
+    smul_lic = row.get("smul_licenciado", False)
+    p.append("<hr style='margin:4px 0'>")
+    if smul_lic:
+        p.append("<b style='color:#8e44ad;font-size:11px'>"
+                 "\U0001f4cb SMUL (Licen\u00e7a Municipal)</b><br>")
+        smul_auto = _fmt(row.get("smul_auto"))
+        smul_val = row.get("smul_validade")
+        smul_vig = bool(row.get("smul_vigente", False))
+        smul_prop = _fmt(row.get("smul_proprietario"))
+        smul_nome_val = _fmt(row.get("smul_nome"))
+
+        if smul_nome_val:
+            p.append(f"<b>Nome SMUL:</b> {smul_nome_val}<br>")
+        if smul_auto:
+            p.append(f"<b>Auto licen\u00e7a:</b> {smul_auto}<br>")
+        if pd.notna(smul_val):
+            smul_val_str = _fmt(smul_val, fmt_date=True) or str(smul_val)[:10]
+            vig_color = "#2ecc71" if smul_vig else "#e74c3c"
+            vig_text = "Vigente" if smul_vig else "Vencida"
+            p.append(
+                f"<b>Validade:</b> {smul_val_str} "
+                f"(<span style='color:{vig_color};font-weight:bold'>"
+                f"{vig_text}</span>)<br>"
+            )
+        if smul_prop:
+            p.append(f"<b>Propriet\u00e1rio:</b> {smul_prop}<br>")
+    else:
+        p.append(
+            "<b style='color:#e74c3c;font-size:11px'>"
+            "\U0001f4cb SMUL:</b> "
+            "<span style='color:#e74c3c'>Sem licen\u00e7a</span><br>"
+        )
+
+    # ── SECTION: Localização ──
+    p.append("<hr style='margin:4px 0'>")
+    p.append("<b style='color:#7f8c8d;font-size:11px'>"
+             "\U0001f4cd LOCALIZA\u00c7\u00c3O</b><br>")
+    if endereco:
+        p.append(f"<b>Endere\u00e7o:</b> {endereco}<br>")
+    if distrito:
+        p.append(f"<b>Distrito:</b> {distrito}<br>")
+    if dist_str:
+        p.append(f"<b>Dist\u00e2ncia match:</b> {dist_str}<br>")
+    p.append(f"<b>Coord:</b> {lat:.5f}, {lon:.5f}")
+    p.append("</div>")
+
+    return "".join(p)
+
+
 def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     """Create an interactive Folium map of heliport statuses."""
 
@@ -1053,75 +1247,8 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         nome = row.get("gs_nome") or row.get("anac_nome") or "Sem nome"
         oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
         oaci_display = oaci if (isinstance(oaci, str) and oaci.strip()) else "\u2014"
-        ciad = row.get("anac_ciad") or ""
-        dist = row.get("dist_metros")
-        dist_str = f"{dist:.0f}m" if pd.notna(dist) else "\u2014"
-        endereco = row.get("gs_endereco") or ""
-        situacao_gs = row.get("gs_situacao") or "\u2014"
-        distrito = row.get("nm_distrito_municipal") or ""
 
-        # Build popup — irregular gets a prominent banner
-        popup_parts = []
-        popup_parts.append(
-            "<div style='font-family:Arial,sans-serif;font-size:12px;min-width:250px'>"
-        )
-        if is_irregular:
-            irreg_label = _irregular_label(status)
-            popup_parts.append(
-                f"<div style='background:{color};color:white;padding:6px 10px;"
-                f"margin:-12px -12px 8px -12px;border-radius:4px 4px 0 0;"
-                f"font-weight:bold;font-size:13px;text-align:center'>"
-                f"\u26a0 {irreg_label}</div>"
-            )
-        popup_parts.append(f"<b style='font-size:14px'>{nome}</b><br>")
-        popup_parts.append("<hr style='margin:4px 0'>")
-        popup_parts.append(f"<b>OACI:</b> {oaci_display}<br>")
-        popup_parts.append(f"<b>CIAD:</b> {ciad}<br>")
-        anac_val = row.get("anac_validade")
-        if pd.notna(anac_val):
-            anac_val_str = anac_val.strftime("%d/%m/%Y") if hasattr(anac_val, "strftime") else str(anac_val)[:10]
-            anac_ativo = row.get("anac_ativo", True)
-            av_color = "#2ecc71" if anac_ativo else "#e74c3c"
-            av_text = "Vigente" if anac_ativo else "Vencido"
-            popup_parts.append(
-                f"<b>Registro ANAC:</b> {anac_val_str} "
-                f"(<span style='color:{av_color}'>{av_text}</span>)<br>"
-            )
-        popup_parts.append(
-            f"<b>Status:</b> <span style='color:{color};font-weight:bold'>"
-            f"{status}</span><br>"
-        )
-        popup_parts.append(f"<b>Situação GeoSampa:</b> {situacao_gs}<br>")
-        smul_lic = row.get("smul_licenciado", False)
-        if smul_lic:
-            smul_auto = row.get("smul_auto") or "\u2014"
-            smul_val = row.get("smul_validade")
-            smul_val_str = (
-                smul_val.strftime("%d/%m/%Y") if pd.notna(smul_val) else "\u2014"
-            )
-            smul_vig = row.get("smul_vigente", False)
-            vig_color = "#2ecc71" if smul_vig else "#e74c3c"
-            vig_text = "Vigente" if smul_vig else "Vencida"
-            popup_parts.append(
-                f"<b>Auto SMUL:</b> {smul_auto} "
-                f"(<span style='color:{vig_color}'>{vig_text}</span> "
-                f"até {smul_val_str})<br>"
-            )
-        else:
-            popup_parts.append(
-                "<b>Auto SMUL:</b> "
-                "<span style='color:#e74c3c'>Não encontrado</span><br>"
-            )
-        if endereco:
-            popup_parts.append(f"<b>Endereço:</b> {endereco}<br>")
-        if distrito:
-            popup_parts.append(f"<b>Distrito:</b> {distrito}<br>")
-        popup_parts.append(
-            f"<b>Distância match:</b> {dist_str}<br>"
-            f"<b>Coord:</b> {lat:.5f}, {lon:.5f}"
-            "</div>"
-        )
-        popup_html = "".join(popup_parts)
+        popup_html = _build_popup_html(row, lat, lon, status, color, is_irregular)
 
         fg = groups.get(status, list(groups.values())[0])
 
@@ -1150,7 +1277,7 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.9,
-                popup=folium.Popup(popup_html, max_width=350),
+                popup=folium.Popup(popup_html, max_width=380),
                 tooltip=f"\u26a0 IRREGULAR — {oaci_display} — {nome}",
             ).add_to(fg)
         else:
@@ -1163,7 +1290,7 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.85,
-                popup=folium.Popup(popup_html, max_width=350),
+                popup=folium.Popup(popup_html, max_width=380),
                 tooltip=f"{oaci_display} — {nome}",
             ).add_to(fg)
 
@@ -1261,13 +1388,23 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "gs_endereco",
         "gs_situacao",
         "nm_distrito_municipal",
+        "cd_processo_administrativo_heliponto",
+        "cd_parecer_tecnico",
+        "cd_parecer_decont",
+        "dt_publicacao_diario_oficial",
+        "qt_ciclo_diurno",
+        "qt_ciclo_vespertino",
+        "qt_total_ciclo_permitido",
+        "tx_observacao_heliponto",
         "anac_nome",
         "anac_oaci",
         "anac_ciad",
         "anac_validade",
+        "anac_status_raw",
         "anac_ativo",
         "smul_licenciado",
         "smul_nome",
+        "smul_proprietario",
         "smul_auto",
         "smul_validade",
         "smul_vigente",

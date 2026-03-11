@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório de Helipontos — São Paulo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; color: #2c3e50; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 28px; color: #1a252f; margin-bottom: 5px; }
+  h2 { font-size: 20px; color: #2980b9; margin: 30px 0 15px; border-bottom: 2px solid #2980b9; padding-bottom: 5px; }
+  h3 { font-size: 16px; color: #34495e; margin: 15px 0 8px; }
+  .subtitle { color: #7f8c8d; font-size: 14px; margin-bottom: 25px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 15px 0; }
+  .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }
+  .card .number { font-size: 36px; font-weight: bold; }
+  .card .label { font-size: 13px; color: #7f8c8d; margin-top: 4px; }
+  .green { color: #27ae60; }
+  .red { color: #e74c3c; }
+  .orange { color: #e67e22; }
+  .blue { color: #2980b9; }
+  .purple { color: #8e44ad; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  th { background: #2c3e50; color: white; padding: 10px 12px; text-align: left; font-size: 13px; }
+  td { padding: 8px 12px; border-bottom: 1px solid #ecf0f1; font-size: 13px; }
+  tr:hover td { background: #f8f9fa; }
+  .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; color: white; }
+  .badge-regular { background: #27ae60; }
+  .badge-irregular { background: #e74c3c; }
+  .badge-warn { background: #e67e22; }
+  .section { background: white; border-radius: 10px; padding: 20px 25px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .bar { height: 24px; border-radius: 12px; display: flex; overflow: hidden; margin: 10px 0; }
+  .bar div { height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; }
+  .footer { text-align: center; color: #95a5a6; font-size: 12px; margin-top: 40px; padding: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Relatório de Helipontos de São Paulo</h1>
+<p class="subtitle">Cruzamento de dados: ANAC (Federal) × GeoSampa (Prefeitura) × SMUL (Licença Municipal) &mdash; Gerado em 11/03/2026</p>
+
+<div class="grid">
+  <div class="card"><div class="number blue">282</div><div class="label">Total de Helipontos</div></div>
+  <div class="card"><div class="number green">67</div><div class="label">Regulares (24%)</div></div>
+  <div class="card"><div class="number red">215</div><div class="label">Irregulares (76%)</div></div>
+  <div class="card"><div class="number orange">714</div><div class="label">Ciclos/dia autorizados</div></div>
+</div>
+
+<h2>1. Visão Geral — Status Consolidado</h2>
+<div class="section">
+  <p>A análise cruzou <b>223</b> registros da ANAC, <b>201</b> do GeoSampa e <b>72</b> licenças SMUL, totalizando <b>282</b> helipontos únicos.</p>
+  <div class="bar">
+    <div style="width:23.8%;background:#27ae60" title="Regular">67</div>
+    <div style="width:30.5%;background:#c0392b" title="Sem Licença SMUL">86</div>
+    <div style="width:23.8%;background:#9b59b6" title="Não cadastrado Prefeitura">67</div>
+    <div style="width:20.9%;background:#e74c3c" title="Não cadastrado ANAC">59</div>
+    <div style="width:1.1%;background:#d35400" title="SMUL Vencida">3</div>
+    <div style="width:0.0%;background:#e67e22" title="ANAC Inativo"></div>
+  </div>
+  <table>
+    <tr><th>Status</th><th>Qtd</th><th>%</th><th>Descrição</th></tr>
+    <tr><td><span class="status-badge badge-regular">REGULAR</span></td><td>67</td><td>23.8%</td><td>Cadastro ativo na ANAC + licença SMUL vigente</td></tr>
+    <tr><td><span class="status-badge badge-irregular">SEM_LICENÇA_SMUL</span></td><td>86</td><td>30.5%</td><td>Ativo na ANAC e GeoSampa, mas sem licença municipal da SMUL</td></tr>
+    <tr><td><span class="status-badge badge-irregular">NÃO_CADASTRADO_PREFEITURA</span></td><td>67</td><td>23.8%</td><td>Registrado na ANAC, mas sem cadastro no GeoSampa/Prefeitura</td></tr>
+    <tr><td><span class="status-badge badge-irregular">NÃO_CADASTRADO_ANAC</span></td><td>59</td><td>20.9%</td><td>Cadastrado no GeoSampa, mas sem registro na ANAC federal</td></tr>
+    <tr><td><span class="status-badge badge-warn">LICENÇA_SMUL_VENCIDA</span></td><td>3</td><td>1.1%</td><td>Possui licença SMUL, porém vencida</td></tr>
+    <tr><td><span class="status-badge badge-warn">DIVERGENTE_ANAC_INATIVO</span></td><td>0</td><td>0.0%</td><td>Registrado na ANAC como inativo/cancelado</td></tr>
+  </table>
+</div>
+
+<h2>2. Dados ANAC (Federal)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">223</div><div class="label">Registrados na ANAC</div></div>
+    <div class="card"><div class="number">205</div><div class="label">Operação VFR</div></div>
+    <div class="card"><div class="number">18</div><div class="label">Operação VFR Diurna</div></div>
+  </div>
+  <h3>Tipos de Operação</h3>
+  <p><b>VFR</b> (Visual Flight Rules): Operação por regras de voo visual, sem restrição de horário. <b>205</b> helipontos.</p>
+  <p><b>VFR Diurna</b>: Operação visual restrita ao período diurno. <b>18</b> helipontos.</p>
+  <h3>Validade do Registro</h3>
+  <p>Registro mais antigo: <b>19/07/2018</b> &mdash; 
+     Registro mais recente: <b>01/01/2026</b></p>
+  <p style="color:#7f8c8d;font-size:12px">Nota: Muitos registros com data 19/07/2018 correspondem à carga inicial do sistema de dados abertos da ANAC.</p>
+</div>
+
+<h2>3. Dados GeoSampa (Prefeitura)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">201</div><div class="label">Cadastrados no GeoSampa</div></div>
+    <div class="card"><div class="number green">149</div><div class="label">Deferidos</div></div>
+    <div class="card"><div class="number red">52</div><div class="label">Indeferidos</div></div>
+  </div>
+  <h3>Ciclos de Voo Permitidos</h3>
+  <p>Os ciclos representam o número máximo de pousos+decolagens diários autorizados pela Prefeitura.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Helipontos com info de ciclos</td><td>201</td></tr>
+    <tr><td>Total de ciclos/dia autorizados</td><td><b>714</b></td></tr>
+    <tr><td>Média de ciclos/dia por heliponto</td><td>3.6</td></tr>
+    <tr><td>Máximo ciclos/dia (1 heliponto)</td><td>25</td></tr>
+  </table>
+
+  <h3>Top 10 Helipontos por Ciclos Permitidos</h3>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Ciclos/dia</th><th>Distrito</th><th>Status</th></tr>
+    <tr><td>Heliponto Hospital Sírio Libanês II</td><td>SJSL</td><td><b>25</b></td><td>BELA VISTA</td><td><span class='status-badge badge-irregular'>SEM_LICENÇA_SMUL</span></td></tr>
+    <tr><td>Heliponto Arena Fundo de Investimento Imobiliário Sport Club Corinthians Paulista</td><td>-</td><td><b>25</b></td><td>ARTUR ALVIM</td><td><span class='status-badge badge-regular'>REGULAR</span></td></tr>
+    <tr><td>Heliponto DMR</td><td>-</td><td><b>25</b></td><td>PIRITUBA</td><td><span class='status-badge badge-irregular'>NÃO_CADASTRADO_ANAC</span></td></tr>
+    <tr><td>Condominio Rede Globo – Heliponto Rede Globo 2</td><td>SWOU</td><td><b>20</b></td><td>ITAIM BIBI</td><td><span class='status-badge badge-regular'>REGULAR</span></td></tr>
+    <tr><td>Heliponto Conjunto Hospitalar do Mandaqui</td><td>SWHX</td><td><b>16</b></td><td>SANTANA</td><td><span class='status-badge badge-irregular'>SEM_LICENÇA_SMUL</span></td></tr>
+    <tr><td>Heliponto Berrini One</td><td>SITO</td><td><b>15</b></td><td>ITAIM BIBI</td><td><span class='status-badge badge-irregular'>SEM_LICENÇA_SMUL</span></td></tr>
+    <tr><td>Heliponto ETE São Miguel – SABESP</td><td>-</td><td><b>15</b></td><td>SAO MIGUEL</td><td><span class='status-badge badge-irregular'>NÃO_CADASTRADO_ANAC</span></td></tr>
+    <tr><td>Heliponto Plaza Iguatemi - SIKF</td><td>SIKF</td><td><b>13</b></td><td>PINHEIROS</td><td><span class='status-badge badge-regular'>REGULAR</span></td></tr>
+    <tr><td>Heliponto Parque da Cidade Torre B1</td><td>-</td><td><b>12</b></td><td>SANTO AMARO</td><td><span class='status-badge badge-irregular'>SEM_LICENÇA_SMUL</span></td></tr>
+    <tr><td>Heliponto Represa</td><td>SIGZ</td><td><b>12</b></td><td>ITAIM BIBI</td><td><span class='status-badge badge-regular'>REGULAR</span></td></tr>
+  </table>
+</div>
+<h2>4. Dados SMUL (Licença de Funcionamento)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number purple">72</div><div class="label">Com Licença SMUL</div></div>
+    <div class="card"><div class="number green">68</div><div class="label">Vigentes</div></div>
+    <div class="card"><div class="number red">4</div><div class="label">Vencidas</div></div>
+  </div>
+  <p>A SMUL (Secretaria Municipal de Urbanismo e Licenciamento) emite autos de licença de funcionamento conforme Decreto nº 58.094/2018.</p>
+  <p>Validade mais próxima a vencer: <b>22/11/2023</b> &mdash; Validade mais distante: <b>26/07/2032</b></p>
+  <p style="color:#e74c3c;font-weight:bold">⚠ 210 helipontos (74%) não possuem licença SMUL registrada.</p>
+</div>
+
+<h2>5. Distribuição Geográfica (Top 10 Distritos)</h2>
+<div class="section">
+  <table>
+    <tr><th>Distrito</th><th>Helipontos</th><th>% do Total</th></tr>
+    <tr><td>ITAIM BIBI</td><td>68</td><td>24.1%</td></tr>
+    <tr><td>SANTO AMARO</td><td>22</td><td>7.8%</td></tr>
+    <tr><td>PINHEIROS</td><td>17</td><td>6.0%</td></tr>
+    <tr><td>BELA VISTA</td><td>16</td><td>5.7%</td></tr>
+    <tr><td>MORUMBI</td><td>12</td><td>4.3%</td></tr>
+    <tr><td>JARDIM PAULISTA</td><td>10</td><td>3.5%</td></tr>
+    <tr><td>VILA MARIANA</td><td>6</td><td>2.1%</td></tr>
+    <tr><td>BARRA FUNDA</td><td>6</td><td>2.1%</td></tr>
+    <tr><td>VILA ANDRADE</td><td>3</td><td>1.1%</td></tr>
+    <tr><td>TATUAPE</td><td>3</td><td>1.1%</td></tr>
+    <tr style="font-weight:bold"><td>Demais distritos</td><td>119</td><td>42.2%</td></tr>
+  </table>
+  <p style="color:#7f8c8d;font-size:12px;margin-top:8px">Nota: Helipontos cadastrados apenas na ANAC (sem GeoSampa) não possuem distrito informado.</p>
+</div>
+
+<h2>6. Qualidade do Cruzamento Espacial</h2>
+<div class="section">
+  <p>O cruzamento GeoSampa × ANAC utiliza proximidade espacial (raio de 100m) para associar registros das duas bases.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Matches realizados</td><td>142</td></tr>
+    <tr><td>Distância média</td><td>23.0m</td></tr>
+    <tr><td>Distância mediana</td><td>16.0m</td></tr>
+    <tr><td>Matches exatos (&lt;5m)</td><td>9</td></tr>
+    <tr><td>Matches próximos (5-50m)</td><td>123</td></tr>
+    <tr><td>Matches distantes (50-100m)</td><td>10</td></tr>
+  </table>
+</div>
+
+<h2>7. Conclusões e Achados Principais</h2>
+<div class="section">
+  <ol style="padding-left:20px">
+    <li style="margin-bottom:10px"><b>Apenas 24% dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros 76% apresentam alguma irregularidade.</li>
+    <li style="margin-bottom:10px"><b>86 helipontos operam sem licença municipal (SMUL)</b>, mesmo tendo cadastro ativo na ANAC e no GeoSampa. Esta é a maior categoria de irregularidade.</li>
+    <li style="margin-bottom:10px"><b>67 helipontos registrados na ANAC não constam no GeoSampa</b> da Prefeitura, indicando possível falta de cadastro municipal ou base desatualizada.</li>
+    <li style="margin-bottom:10px"><b>59 helipontos do GeoSampa não possuem registro na ANAC</b>, sugerindo operações sem autorização federal ou registros desatualizados.</li>
+    <li style="margin-bottom:10px"><b>Itaim Bibi é o distrito com maior concentração</b>, com 68 helipontos (24% do total).</li>
+    <li style="margin-bottom:10px"><b>714 ciclos/dia estão autorizados</b> no total, com média de 3.6 por heliponto.</li>
+    <li style="margin-bottom:10px"><b>Todos os 223 registros ANAC estão com status "VFR" ativo</b> — nenhum marcado como inativo pela ANAC.</li>
+  </ol>
+</div>
+
+<div class="footer">
+  <p>Relatório gerado automaticamente em 11/03/2026 &mdash; Fontes: ANAC (dados abertos), GeoSampa (WFS), SMUL (autos de licença)</p>
+  <p>Arquivos complementares: <code>mapa_helipontos_sp.html</code> (mapa interativo) | <code>comparativo_helipontos_sp.csv</code> (dados tabulares)</p>
+</div>
+
+</div>
+</body>
+</html>
