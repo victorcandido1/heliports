@@ -562,6 +562,37 @@ def _normalize_street(s: str) -> str:
     return s
 
 
+def _normalize_name(s: str) -> str:
+    """Normalize a heliport name for fuzzy matching."""
+    if not s or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    s = str(s)
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.upper().strip()
+    # Remove common filler words
+    s = re.sub(
+        r"\b(HELIPONTO|HELIPORTO|PRIVADO|CONDOMINIO|COND\.?|"
+        r"EDIFICIO|EDIF\.?|ED\.?|TORRE|EMPREEND\w*|IMOB\w*|"
+        r"LTDA\.?|S/?A\.?|PARTICIPACOES|FUNDO|INVESTIMENTO|"
+        r"IMOBILIARIO|DE|DO|DA|DOS|DAS|E|EM)\b[.\s]*",
+        "",
+        s,
+    )
+    s = re.sub(r"[^A-Z0-9 ]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _name_overlap(a: str, b: str) -> float:
+    """Return word-level Jaccard similarity between two normalised names."""
+    wa = set(a.split())
+    wb = set(b.split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
 def _addr_key(street: str, number) -> str:
     """Create a normalized address key for matching: ``STREET|NUMBER``."""
     n = _normalize_street(street)
@@ -757,6 +788,47 @@ def merge_smul(
                 gdf.at[idx, "smul_licenciado"] = True
                 matched_smul_keys.add(smul_row["_smul_addr_key"])
                 break
+
+    # --- Pass 4: name-based matching (especially for ANAC-only records) ---
+    # Build normalised SMUL name lookup for still-unmatched records
+    smul_name_lookup: dict[str, pd.Series] = {}
+    for _, row in df_smul.iterrows():
+        if row["_smul_addr_key"] in matched_smul_keys:
+            continue
+        nname = _normalize_name(str(row.get("smul_nome", "")))
+        if nname:
+            smul_name_lookup[nname] = row
+
+    if smul_name_lookup:
+        for idx, row in gdf.iterrows():
+            if gdf.at[idx, "smul_licenciado"]:
+                continue
+            # Try matching against GeoSampa name, ANAC name, or both
+            for name_col in ["gs_nome", "anac_nome"]:
+                raw_name = row.get(name_col)
+                if not raw_name or (isinstance(raw_name, float) and pd.isna(raw_name)):
+                    continue
+                rec_name = _normalize_name(str(raw_name))
+                if not rec_name:
+                    continue
+                for smul_name, smul_row in list(smul_name_lookup.items()):
+                    if smul_row["_smul_addr_key"] in matched_smul_keys:
+                        continue
+                    # Check containment in both directions
+                    if (
+                        smul_name in rec_name
+                        or rec_name in smul_name
+                        or (len(rec_name) >= 6 and len(smul_name) >= 6
+                            and _name_overlap(rec_name, smul_name) >= 0.6)
+                    ):
+                        for col in smul_cols:
+                            if col in smul_row.index:
+                                gdf.at[idx, col] = smul_row[col]
+                        gdf.at[idx, "smul_licenciado"] = True
+                        matched_smul_keys.add(smul_row["_smul_addr_key"])
+                        break
+                if gdf.at[idx, "smul_licenciado"]:
+                    break
 
     n_matched = int(gdf["smul_licenciado"].sum())
     n_smul_unmatched = len(df_smul) - len(matched_smul_keys)
@@ -1290,28 +1362,34 @@ def main():
     # Step 5: Match SMUL license data
     gdf_result = merge_smul(gdf_result, df_smul)
 
-    # Step 6: Re-evaluate status with SMUL data
+    # Step 6: Re-evaluate status with SMUL as primary municipal source
     def _final_status(row):
-        has_anac = pd.notna(row.get("dist_metros"))
+        # Determine data source availability
+        has_geosampa = pd.notna(row.get("gs_nome"))
+        has_anac_match = pd.notna(row.get("dist_metros"))
+        is_anac_only = row.get("status_consolidado") == "NÃO_CADASTRADO_PREFEITURA"
         anac_ativo = row.get("anac_ativo", True)
         has_smul = bool(row.get("smul_licenciado", False))
         smul_vigente = bool(row.get("smul_vigente", False))
 
-        if not has_anac:
+        # ANAC status checks (federal)
+        if not has_anac_match and not is_anac_only:
             return "NÃO_CADASTRADO_ANAC"
         if not anac_ativo:
             return "DIVERGENTE_ANAC_INATIVO"
+
+        # SMUL is the authoritative source for municipal licensing
+        if has_smul and smul_vigente:
+            return "REGULAR"
         if has_smul and not smul_vigente:
             return "LICENÇA_SMUL_VENCIDA"
-        if not has_smul:
-            return "SEM_LICENÇA_SMUL"
-        return "REGULAR"
 
-    # Only re-evaluate records that came from GeoSampa (not ANAC-only)
-    mask_gs = gdf_result["status_consolidado"] != "NÃO_CADASTRADO_PREFEITURA"
-    gdf_result.loc[mask_gs, "status_consolidado"] = gdf_result.loc[mask_gs].apply(
-        _final_status, axis=1
-    )
+        # No SMUL license found
+        if is_anac_only and not has_geosampa:
+            return "NÃO_CADASTRADO_PREFEITURA"
+        return "SEM_LICENÇA_SMUL"
+
+    gdf_result["status_consolidado"] = gdf_result.apply(_final_status, axis=1)
 
     log.info("Final status breakdown:")
     for status, count in gdf_result["status_consolidado"].value_counts().items():
