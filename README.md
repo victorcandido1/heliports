@@ -19,6 +19,9 @@ python helipontos_sp.py --anac-csv anac_helipontos.csv --geosampa-file heliponto
 
 # Buffer customizado (padrão: 100m)
 python helipontos_sp.py --buffer 150
+
+# Usar apenas cache do AISWEB (sem buscar dimensões/MTOW online)
+python helipontos_sp.py --no-fetch-aisweb
 ```
 
 ## Arquivos locais aceitos
@@ -33,7 +36,9 @@ Se os servidores da ANAC ou GeoSampa estiverem indisponíveis, coloque os arquiv
 | Arquivo | Descrição |
 |---|---|
 | `comparativo_helipontos_sp.csv` | Tabela comparativa com status consolidado |
-| `mapa_helipontos_sp.html` | Mapa interativo (Folium) |
+| `mapa_helipontos_sp.html` | Mapa interativo (Folium) — inclui botão **Dashboard** que abre o relatório em overlay |
+| `relatorio_helipontos_sp.html` | Dashboard/relatório (abre em overlay ao clicar no botão) |
+| `aisweb_helipontos_cache.json` | Cache de dimensões e MTOW do AISWEB (gerado automaticamente) |
 
 ## Status consolidado
 
@@ -48,3 +53,13 @@ Se os servidores da ANAC ou GeoSampa estiverem indisponíveis, coloque os arquiv
 
 - **ANAC**: [Portal de Dados Abertos](https://www.gov.br/anac/pt-br/assuntos/regulados/aeroportos-e-aerodromos/lista-de-aerodromos-civis-cadastrados)
 - **GeoSampa**: [WFS Prefeitura de São Paulo](http://wfs.geosampa.prefeitura.sp.gov.br/geoserver/geoportal/ows)
+- **AISWEB**: [Aeródromos/ROTAER](https://aisweb.decea.mil.br/?i=aerodromos) — dimensões e peso máximo (MTOW) por heliponto
+
+## Deploy (Railway)
+
+Para publicar no Railway, gere os arquivos (`python helipontos_sp.py`) e sirva os HTMLs como estáticos:
+
+- `mapa_helipontos_sp.html` — página principal (abre o mapa)
+- `relatorio_helipontos_sp.html` — carregado em overlay ao clicar em "Dashboard"
+
+Ambos devem estar no mesmo diretório/base URL para o iframe do dashboard funcionar.

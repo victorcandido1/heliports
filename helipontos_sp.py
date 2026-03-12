@@ -14,14 +14,17 @@ Fontes:
 
 import csv
 import io
+import json
 import logging
 import re
 import sys
+import time
 import unicodedata
 import warnings
 from pathlib import Path
 
 import folium
+from branca.element import IFrame
 import geopandas as gpd
 import pandas as pd
 import requests
@@ -93,6 +96,25 @@ SMUL_XLSX_URL = (
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
 OUTPUT_MAP = "mapa_helipontos_sp.html"
+DASHBOARD_URL = "relatorio_helipontos_sp.html"  # relativo ao mapa (mesmo dir)
+AISWEB_CACHE = "aisweb_helipontos_cache.json"
+AISWEB_BASE_URL = "https://aisweb.decea.mil.br/?i=aerodromos&codigo="
+
+# ROTAER superfície: código → nome legível (ROTAER AIP-Brasil)
+ROTAER_SUPERFICIE = {
+    "CONC": "Concreto",
+    "ASPH": "Asfalto",
+    "ASF": "Asfalto/Concreto asfáltico",
+    "GRA": "Grama",
+    "ARE": "Areia",
+    "TER": "Terra",
+    "SAI": "Saibro",
+    "CIN": "Cinza",
+    "MAC": "Macadame",
+    "MET": "Metálico",
+    "MTAL": "Metálico",
+    "ACO": "Aço",
+}
 
 # ---------------------------------------------------------------------------
 # 1. Coordinate conversion  (GMS → Decimal)
@@ -173,6 +195,124 @@ def _download_with_retries(url: str, timeout: int = 30) -> requests.Response | N
         except requests.RequestException as exc:
             log.warning("Request error for %s: %s (attempt %d)", url, exc, attempt + 1)
     return None
+
+
+# ---------------------------------------------------------------------------
+# AISWEB — Dimensões e peso máximo (ROTAER)
+# ---------------------------------------------------------------------------
+
+# Regex ROTAER: ( 18x18 CONC 3.0t L30 ) — dimensões, superfície, MTOW
+# HTML pode ter tags entre elementos, ex: 3.0t<span>L30</span>
+_RE_ROTAER = re.compile(
+    r"\(\s*(\d+)\s*x\s*(\d+)\s+(\w+)\s+([\d,.]+)\s*t\s+",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_aisweb_rotaer(html: str) -> dict | None:
+    """Extrai dimensões e MTOW do HTML da página AISWEB/ROTAER."""
+    m = _RE_ROTAER.search(html)
+    if not m:
+        return None
+    try:
+        dim1, dim2 = int(m.group(1)), int(m.group(2))
+        superficie = m.group(3).upper()
+        mtow = float(m.group(4).replace(",", "."))
+        dim_text = f"{dim1}×{dim2} m"  # × = multiplicação (U+00D7)
+        sup_nome = ROTAER_SUPERFICIE.get(superficie[:4], ROTAER_SUPERFICIE.get(superficie[:3], superficie))
+        return {
+            "dimensoes": dim_text,
+            "superficie": sup_nome,
+            "mtow_ton": mtow,
+            "mtow_display": f"{mtow:.1f} t",
+        }
+    except (ValueError, IndexError):
+        return None
+
+
+def _fetch_aisweb_oaci(codigo: str) -> dict | None:
+    """Busca dimensões e MTOW no AISWEB para um código OACI."""
+    if not codigo or not isinstance(codigo, str) or not codigo.strip():
+        return None
+    codigo = codigo.strip().upper()
+    url = f"{AISWEB_BASE_URL}{codigo}"
+    resp = _download_with_retries(url, timeout=25)
+    if resp is None:
+        return None
+    return _parse_aisweb_rotaer(resp.text)
+
+
+def load_aisweb_cache(cache_path: str = AISWEB_CACHE) -> dict:
+    """Carrega cache de dimensões/MTOW do AISWEB."""
+    p = Path(cache_path)
+    if p.exists():
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_aisweb_cache(cache: dict, cache_path: str = AISWEB_CACHE) -> None:
+    """Salva cache de dimensões/MTOW."""
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=0)
+    except OSError as exc:
+        log.warning("Could not save AISWEB cache: %s", exc)
+
+
+def enrich_with_aisweb(
+    gdf: gpd.GeoDataFrame,
+    fetch_missing: bool = True,
+    cache_path: str = AISWEB_CACHE,
+) -> gpd.GeoDataFrame:
+    """Enriquece GeoDataFrame com dimensões e MTOW do AISWEB."""
+    cache = load_aisweb_cache(cache_path)
+    gdf = gdf.copy()
+    gdf["aisweb_dimensoes"] = None
+    gdf["aisweb_mtow"] = None
+    gdf["aisweb_superficie"] = None
+
+    # Coletar OACIs únicos
+    def _get_oaci(row):
+        o = row.get("anac_oaci") or row.get("gs_oaci")
+        if pd.notna(o) and str(o).strip():
+            return str(o).strip().upper()
+        return None
+
+    oacis = set()
+    for _, row in gdf.iterrows():
+        o = _get_oaci(row)
+        if o:
+            oacis.add(o)
+
+    n_fetched = 0
+    for oaci in sorted(oacis):
+        if oaci in cache:
+            data = cache[oaci]
+        elif fetch_missing:
+            data = _fetch_aisweb_oaci(oaci)
+            if data:
+                cache[oaci] = data
+                n_fetched += 1
+                save_aisweb_cache(cache, cache_path)  # salva a cada novo
+                time.sleep(0.15)  # rate limit para não sobrecarregar AISWEB
+        else:
+            data = None
+
+        if data:
+            mask = gdf.apply(lambda r: _get_oaci(r) == oaci, axis=1)
+            gdf.loc[mask, "aisweb_dimensoes"] = data.get("dimensoes")
+            gdf.loc[mask, "aisweb_mtow"] = data.get("mtow_display")
+            gdf.loc[mask, "aisweb_superficie"] = data.get("superficie")
+        log.info("AISWEB: fetched %d new records, cached %d total", n_fetched, len(cache))
+
+    n_with_data = gdf["aisweb_dimensoes"].notna().sum()
+    log.info("AISWEB: %d heliports with dimensions/MTOW data", int(n_with_data))
+
+    return gdf
 
 
 def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
@@ -1004,7 +1144,7 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
     p = []  # popup parts
     p.append(
         "<div style='font-family:Arial,sans-serif;font-size:12px;"
-        "min-width:280px;max-width:380px'>"
+        "min-width:280px;max-width:400px;overflow-y:auto'>"
     )
 
     # --- Banner for irregulars ---
@@ -1035,7 +1175,7 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
     anac_nome = _fmt(row.get("anac_nome"))
     anac_ativo = row.get("anac_ativo", True)
     anac_val = row.get("anac_validade")
-    anac_operacao = _fmt(row.get("anac_status_raw"))
+    anac_operacao_raw = _fmt(row.get("anac_status_raw"))
     has_anac = anac_nome or _fmt(row.get("anac_oaci"))
     if has_anac:
         p.append("<hr style='margin:4px 0'>")
@@ -1043,8 +1183,22 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
                  "\U0001f6e9 ANAC (Federal)</b><br>")
         if anac_nome:
             p.append(f"<b>Nome ANAC:</b> {anac_nome}<br>")
-        if anac_operacao:
-            p.append(f"<b>Opera\u00e7\u00e3o:</b> {anac_operacao}<br>")
+        # Destaque operação noturna (VFR diurno = sem noturno; VFR = dia e noite)
+        if anac_operacao_raw:
+            oper_upper = str(anac_operacao_raw).upper()
+            if "VFR DIURNA" in oper_upper or "VFR DIURNO" in oper_upper:
+                p.append(
+                    "<b>Opera\u00e7\u00e3o noturna:</b> "
+                    "<span style='color:#e67e22;font-weight:bold'>"
+                    "N\u00e3o \u2014 apenas diurno</span><br>"
+                )
+            elif "VFR" in oper_upper or "IFR" in oper_upper:
+                p.append(
+                    "<b>Opera\u00e7\u00e3o noturna:</b> "
+                    "<span style='color:#2ecc71;font-weight:bold'>Sim (dia e noite)</span><br>"
+                )
+            else:
+                p.append(f"<b>Opera\u00e7\u00e3o:</b> {anac_operacao_raw}<br>")
         ativo_color = "#2ecc71" if anac_ativo else "#e74c3c"
         ativo_text = "Ativo" if anac_ativo else "Inativo"
         p.append(
@@ -1166,20 +1320,72 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
         p.append(f"<b>Distrito:</b> {distrito}<br>")
     if dist_str:
         p.append(f"<b>Dist\u00e2ncia match:</b> {dist_str}<br>")
-    p.append(f"<b>Coord:</b> {lat:.5f}, {lon:.5f}")
+    p.append(f"<b>Coord:</b> {lat:.5f}, {lon:.5f}<br>")
+
+    # ── SECTION: AISWEB/ROTAER (dimensões, superfície, peso máximo) ──
+    p.append("<hr style='margin:4px 0'>")
+    p.append("<b style='color:#16a085;font-size:11px'>"
+             "\U0001f4ca ROTAER (AISWEB)</b><br>")
+    dims = _fmt(row.get("aisweb_dimensoes"))
+    mtow = _fmt(row.get("aisweb_mtow"))
+    sup = _fmt(row.get("aisweb_superficie"))
+    if dims or mtow or sup:
+        parts = []
+        if dims:
+            parts.append(f"<b>{dims}</b>")
+        if sup:
+            parts.append(f"superf\u00edcie em <b>{sup}</b>")
+        if mtow:
+            mtow_num = str(row.get("aisweb_mtow", "")).replace(" t", "").replace(".", ",")
+            parts.append(
+                f"aguenta at\u00e9 <b style='color:#16a085'>{mtow_num} toneladas</b>"
+            )
+        if parts:
+            p.append(
+                "<span style='font-size:12px'>"
+                + " &mdash; ".join(parts)
+                + "</span><br>"
+            )
+    oaci_for_link = (row.get("anac_oaci") or row.get("gs_oaci") or "")
+    if isinstance(oaci_for_link, str) and oaci_for_link.strip():
+        aisweb_url = (
+            f"https://aisweb.decea.mil.br/?i=aerodromos&codigo={oaci_for_link.strip().upper()}"
+        )
+        p.append(
+            f"<a href='{aisweb_url}' target='_blank' "
+            "style='color:#2980b9;text-decoration:underline;font-size:11px'>"
+            "Ver detalhes no AISWEB/ROTAER</a><br>"
+        )
+    else:
+        p.append(
+            "<a href='https://aisweb.decea.mil.br/?i=aerodromos' target='_blank' "
+            "style='color:#2980b9;text-decoration:underline;font-size:11px'>"
+            "AISWEB — buscar pelo nome</a><br>"
+        )
+
     p.append("</div>")
 
     return "".join(p)
 
 
-def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
+def build_map(
+    gdf: gpd.GeoDataFrame,
+    output_path: str = OUTPUT_MAP,
+    dashboard_url: str = DASHBOARD_URL,
+) -> None:
     """Create an interactive Folium map of heliport statuses."""
 
     # Centre on São Paulo — Berrini/Faria Lima region
     center = [-23.585, -46.685]
     m = folium.Map(location=center, zoom_start=13, tiles=None)
 
-    # --- Tile layers ---
+    # --- Tile layers (mapas de referência) ---
+    folium.TileLayer(
+        tiles="OpenStreetMap",
+        attr="OpenStreetMap contributors",
+        name="OpenStreetMap (padrão)",
+        overlay=False,
+    ).add_to(m)
     folium.TileLayer(
         tiles=(
             "https://server.arcgisonline.com/ArcGIS/rest/services/"
@@ -1199,7 +1405,7 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
         overlay=True,
         show=True,
     ).add_to(m)
-    folium.TileLayer("CartoDB positron", name="Mapa claro").add_to(m)
+    folium.TileLayer("CartoDB positron", name="Mapa claro (CartoDB)").add_to(m)
 
     # --- Pulsing CSS for irregular markers ---
     pulse_css = """
@@ -1250,11 +1456,22 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
 
         popup_html = _build_popup_html(row, lat, lon, status, color, is_irregular)
 
+        def _make_popup():
+            iframe = IFrame(html=popup_html, width=420, height=420)
+            return folium.Popup(iframe, max_width=450)
+
+        tooltip_text = (
+            f"\u26a0 IRREGULAR — {nome}"
+            if is_irregular
+            else nome
+        )
+        tooltip_text += " (clique para detalhes)"
+
         fg = groups.get(status, list(groups.values())[0])
 
         # Irregular markers: larger, with a pulsing ring and bold border
         if is_irregular:
-            # Pulsing outer ring via DivIcon
+            # Pulsing outer ring via DivIcon — com popup para garantir clique
             folium.Marker(
                 location=[lat, lon],
                 icon=folium.DivIcon(
@@ -1266,6 +1483,8 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                         f"border:3px solid {color};'></div>"
                     ),
                 ),
+                popup=_make_popup(),
+                tooltip=tooltip_text,
             ).add_to(fg)
 
             # Main marker — larger for irregulars
@@ -1277,8 +1496,8 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.9,
-                popup=folium.Popup(popup_html, max_width=380),
-                tooltip=f"\u26a0 IRREGULAR — {oaci_display} — {nome}",
+                popup=_make_popup(),
+                tooltip=tooltip_text,
             ).add_to(fg)
         else:
             # Regular marker — smaller, subtler
@@ -1290,11 +1509,11 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.85,
-                popup=folium.Popup(popup_html, max_width=380),
-                tooltip=f"{oaci_display} — {nome}",
+                popup=_make_popup(),
+                tooltip=tooltip_text,
             ).add_to(fg)
 
-        # ICAO label (DivIcon)
+        # ICAO label (DivIcon) — com popup para clique no rótulo
         if isinstance(oaci, str) and oaci.strip():
             label_color = "white" if not is_irregular else color
             folium.Marker(
@@ -1307,10 +1526,12 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
                         f"font-size:9px;font-weight:bold;color:{label_color};"
                         f"text-shadow:1px 1px 2px black,-1px -1px 2px black,"
                         f"1px -1px 2px black,-1px 1px 2px black;"
-                        f"white-space:nowrap;pointer-events:none;"
-                        f"'>{oaci}</div>"
+                        f"white-space:nowrap;cursor:pointer;"
+                        f"' title='Clique para ver informa\u00e7\u00f5es'>{oaci}</div>"
                     ),
                 ),
+                popup=_make_popup(),
+                tooltip=tooltip_text,
             ).add_to(fg)
 
     for fg in groups.values():
@@ -1369,6 +1590,43 @@ def build_map(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_MAP) -> None:
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
+    # --- Botão Dashboard + overlay ---
+    dashboard_html = f"""
+    <button id="btn-dashboard" onclick="document.getElementById('dashboard-overlay').style.display='flex'"
+            style="position:fixed;top:20px;right:20px;z-index:1001;
+                   background:#2980b9;color:white;border:none;padding:12px 20px;
+                   border-radius:8px;font-size:14px;font-weight:bold;
+                   cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);
+                   font-family:Arial,sans-serif;">
+      📊 Dashboard
+    </button>
+    <div id="dashboard-overlay" onclick="if(event.target===this)this.style.display='none'"
+         style="display:none;position:fixed;inset:0;z-index:2000;
+         background:rgba(0,0,0,0.5);align-items:center;justify-content:center;
+         padding:20px;box-sizing:border-box;"
+         tabindex="-1">
+      <div onclick="event.stopPropagation()"
+           style="background:white;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.4);
+           width:95%;max-width:1100px;height:90vh;overflow:hidden;display:flex;flex-direction:column;">
+        <div style="padding:12px 16px;background:#2c3e50;color:white;display:flex;
+             justify-content:space-between;align-items:center;">
+          <b>Dashboard — Helipontos SP</b>
+          <button onclick="document.getElementById('dashboard-overlay').style.display='none'"
+                  style="background:#e74c3c;color:white;border:none;padding:6px 14px;
+                         border-radius:6px;cursor:pointer;font-weight:bold;">✕ Fechar</button>
+        </div>
+        <iframe src="{dashboard_url}" style="flex:1;width:100%;border:none;min-height:0;"></iframe>
+      </div>
+    </div>
+    <script>
+    document.addEventListener('keydown', function(e) {{
+      if (e.key === 'Escape' && document.getElementById('dashboard-overlay').style.display === 'flex')
+        document.getElementById('dashboard-overlay').style.display = 'none';
+    }});
+    </script>
+    """
+    m.get_root().html.add_child(folium.Element(dashboard_html))
+
     m.save(output_path)
     log.info("Map saved to %s", output_path)
 
@@ -1410,6 +1668,9 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "smul_vigente",
         "status_consolidado",
         "dist_metros",
+        "aisweb_dimensoes",
+        "aisweb_superficie",
+        "aisweb_mtow",
     ]
     available = [c for c in key_cols if c in gdf.columns]
 
@@ -1472,6 +1733,11 @@ def main():
         "--output-map",
         default=OUTPUT_MAP,
         help="Output HTML map path (default: mapa_helipontos_sp.html).",
+    )
+    parser.add_argument(
+        "--no-fetch-aisweb",
+        action="store_true",
+        help="Skip fetching dimensions/MTOW from AISWEB (use cache only).",
     )
     args = parser.parse_args()
 
@@ -1553,6 +1819,12 @@ def main():
     log.info("Final status breakdown:")
     for status, count in gdf_result["status_consolidado"].value_counts().items():
         log.info("  %s: %d", status, count)
+
+    # Step 6b: Enrich with AISWEB (dimensões, superfície, MTOW)
+    gdf_result = enrich_with_aisweb(
+        gdf_result,
+        fetch_missing=not args.no_fetch_aisweb,
+    )
 
     # Step 7: Outputs
     build_map(gdf_result, output_path=args.output_map)
