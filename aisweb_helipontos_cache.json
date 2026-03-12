@@ -1,0 +1,902 @@
+{
+"SDAW": {
+"dimensoes": "20×20 m",
+"superficie": "MTAL",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDBH": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDHA": {
+"dimensoes": "20×20 m",
+"superficie": "CONC",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDHQ": {
+"dimensoes": "18×18 m",
+"superficie": "ASPH",
+"mtow_ton": 2.0,
+"mtow_display": "2.0 t"
+},
+"SDHT": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDIA": {
+"dimensoes": "21×21 m",
+"superficie": "MTAL",
+"mtow_ton": 4.25,
+"mtow_display": "4.2 t"
+},
+"SDKV": {
+"dimensoes": "21×21 m",
+"superficie": "CONC",
+"mtow_ton": 10.0,
+"mtow_display": "10.0 t"
+},
+"SDN3": {
+"dimensoes": "21×21 m",
+"superficie": "CONC",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SDNP": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDPO": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDQC": {
+"dimensoes": "21×21 m",
+"superficie": "CONC",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDYA": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDYZ": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SI8S": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 1.0,
+"mtow_display": "1.0 t"
+},
+"SIBB": {
+"dimensoes": "20×20 m",
+"superficie": "MTAL",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SITO": {
+"dimensoes": "21×21 m",
+"superficie": "CONC",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SJNS": {
+"dimensoes": "21×21 m",
+"superficie": "CONC",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJRQ": {
+"dimensoes": "24×24 m",
+"superficie": "CONC",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SNRW": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SSQV": {
+"dimensoes": "19×19 m",
+"superficie": "CONC",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SSUH": {
+"dimensoes": "18×18 m",
+"superficie": "CONC",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SBOP": {
+"dimensoes": "21×21 m",
+"superficie": "Asfalto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SD2H": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SD3C": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SD3T": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 5.5,
+"mtow_display": "5.5 t"
+},
+"SD6M": {
+"dimensoes": "22×22 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SD6Q": {
+"dimensoes": "22×22 m",
+"superficie": "AÇO",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SD6R": {
+"dimensoes": "22×22 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SDAT": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SDBM": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDBR": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDCY": {
+"dimensoes": "30×30 m",
+"superficie": "Concreto",
+"mtow_ton": 18.0,
+"mtow_display": "18.0 t"
+},
+"SDDG": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDDH": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDDS": {
+"dimensoes": "26×26 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SDEL": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDFM": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDFV": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDFW": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDGG": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDGS": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDHI": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDHW": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDIW": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDJU": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDJW": {
+"dimensoes": "20×20 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDKD": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDKG": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDKY": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDLB": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDMI": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 9.0,
+"mtow_display": "9.0 t"
+},
+"SDMN": {
+"dimensoes": "30×30 m",
+"superficie": "Concreto",
+"mtow_ton": 10.0,
+"mtow_display": "10.0 t"
+},
+"SDMT": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDNN": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDNR": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDOC": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDOF": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDON": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDPM": {
+"dimensoes": "30×30 m",
+"superficie": "Concreto",
+"mtow_ton": 10.0,
+"mtow_display": "10.0 t"
+},
+"SDRB": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDRN": {
+"dimensoes": "23×23 m",
+"superficie": "Metálico",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDSN": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDSX": {
+"dimensoes": "24×24 m",
+"superficie": "Metálico",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDSZ": {
+"dimensoes": "24×24 m",
+"superficie": "Metálico",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDTC": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDTG": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDTJ": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.25,
+"mtow_display": "4.2 t"
+},
+"SDTN": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDTU": {
+"dimensoes": "24×24 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDUI": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDUJ": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDVR": {
+"dimensoes": "30×30 m",
+"superficie": "Concreto",
+"mtow_ton": 18.0,
+"mtow_display": "18.0 t"
+},
+"SDVU": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SDWB": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SDWT": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SDXQ": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SDYV": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SDZR": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SI49": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.2,
+"mtow_display": "4.2 t"
+},
+"SI74": {
+"dimensoes": "18×18 m",
+"superficie": "Metálico",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SIBH": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIBS": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIDA": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SIDE": {
+"dimensoes": "26×26 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIGO": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SIGZ": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SIHD": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SIIH": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SIIR": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SIJD": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SIJF": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIJX": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIKF": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 10.0,
+"mtow_display": "10.0 t"
+},
+"SIKT": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SILF": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.25,
+"mtow_display": "4.2 t"
+},
+"SILV": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SIMM": {
+"dimensoes": "22×22 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SIOD": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SIQM": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIR6": {
+"dimensoes": "20×20 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SIRO": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SIRY": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIUD": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SIXS": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 15.0,
+"mtow_display": "15.0 t"
+},
+"SIYU": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SIYZ": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SJBG": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJBO": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 15.0,
+"mtow_display": "15.0 t"
+},
+"SJBP": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJDD": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SJEB": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.25,
+"mtow_display": "4.2 t"
+},
+"SJEI": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 12.0,
+"mtow_display": "12.0 t"
+},
+"SJFC": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SJOZ": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SJPB": {
+"dimensoes": "24×24 m",
+"superficie": "Grama",
+"mtow_ton": 8.5,
+"mtow_display": "8.5 t"
+},
+"SJRZ": {
+"dimensoes": "20×20 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJSL": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 7.0,
+"mtow_display": "7.0 t"
+},
+"SJTD": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SJTV": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SJWC": {
+"dimensoes": "20×20 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJWJ": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SJWZ": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SJXK": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 10.0,
+"mtow_display": "10.0 t"
+},
+"SJXP": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SJZU": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SN2Z": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SN66": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SNBQ": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SNID": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SNIL": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SNLR": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SNPH": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SS4B": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SSCS": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SSKL": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SSOA": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SSPQ": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SSQX": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SSQY": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 5.0,
+"mtow_display": "5.0 t"
+},
+"SSUF": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SSVH": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SSXK": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 15.0,
+"mtow_display": "15.0 t"
+},
+"SSZE": {
+"dimensoes": "18×18 m",
+"superficie": "Concreto",
+"mtow_ton": 3.0,
+"mtow_display": "3.0 t"
+},
+"SWEL": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SWHH": {
+"dimensoes": "21×21 m",
+"superficie": "Metálico",
+"mtow_ton": 4.0,
+"mtow_display": "4.0 t"
+},
+"SWHX": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.5,
+"mtow_display": "4.5 t"
+},
+"SWNI": {
+"dimensoes": "20×20 m",
+"superficie": "Metálico",
+"mtow_ton": 3.5,
+"mtow_display": "3.5 t"
+},
+"SWRV": {
+"dimensoes": "21×21 m",
+"superficie": "Concreto",
+"mtow_ton": 4.25,
+"mtow_display": "4.2 t"
+},
+"SWTF": {
+"dimensoes": "24×24 m",
+"superficie": "Metálico",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+},
+"SWYD": {
+"dimensoes": "24×24 m",
+"superficie": "Concreto",
+"mtow_ton": 6.0,
+"mtow_display": "6.0 t"
+}
+}
