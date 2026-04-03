@@ -1445,20 +1445,16 @@ def build_map(
     """
     m.get_root().html.add_child(folium.Element(pulse_css))
 
-    # --- Feature groups for layer control ---
-    STATUS_LABELS = {
-        "REGULAR": "\u2705 Regular (ANAC + SMUL)",
-        "DIVERGENTE_ANAC_INATIVO": "\u26a0\ufe0f IRREGULAR — ANAC inativo",
-        "NÃO_CADASTRADO_ANAC": "\u274c IRREGULAR — Sem cadastro ANAC",
-        "NÃO_CADASTRADO_PREFEITURA": "\u274c IRREGULAR — Sem cadastro Prefeitura",
-        "SEM_LICENÇA_SMUL": "\u274c IRREGULAR — Sem licença SMUL",
-        "LICENÇA_SMUL_VENCIDA": "\u26a0\ufe0f IRREGULAR — Licença SMUL vencida",
+    # --- Feature groups for layer control (by size) ---
+    SIZE_LABELS = {
+        "OK": "\U0001f4d0 Dimens\u00e3o \u226521\u00d721 m",
+        "DESCONHECIDO": "\u2753 Dimens\u00e3o desconhecida",
     }
     groups = {}
-    for status_key, label in STATUS_LABELS.items():
-        count = len(gdf[gdf["status_consolidado"] == status_key])
+    for size_key, label in SIZE_LABELS.items():
+        count = int((gdf["tamanho_status"] == size_key).sum()) if "tamanho_status" in gdf.columns else 0
         fg = folium.FeatureGroup(name=f"{label} ({count})", show=True)
-        groups[status_key] = fg
+        groups[size_key] = fg
 
     for _, row in gdf.iterrows():
         geom = row.geometry
@@ -1491,7 +1487,8 @@ def build_map(
             tooltip_text += " (dimensão desconhecida)"
         tooltip_text += " (clique para detalhes)"
 
-        fg = groups.get(status, list(groups.values())[0])
+        tam = row.get("tamanho_status", "DESCONHECIDO")
+        fg = groups.get(tam, list(groups.values())[-1])
 
         # Irregular markers: larger, with a pulsing ring and bold border
         if is_irregular:
@@ -1574,33 +1571,47 @@ def build_map(
     n_sem_smul = len(gdf[gdf["status_consolidado"] == "SEM_LICENÇA_SMUL"])
     n_smul_venc = len(gdf[gdf["status_consolidado"] == "LICENÇA_SMUL_VENCIDA"])
 
-    # Legend with clear irregular section
+    # Size stats for legend
+    n_size_ok = int((gdf["tamanho_status"] == "OK").sum()) if "tamanho_status" in gdf.columns else 0
+    n_size_unk = int((gdf["tamanho_status"] == "DESCONHECIDO").sum()) if "tamanho_status" in gdf.columns else 0
+
+    # Legend with status colors + size info
     legend_html = f"""
     <div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000;
          background: rgba(0,0,0,0.85); padding: 14px 18px; border-radius: 10px;
          box-shadow: 0 4px 12px rgba(0,0,0,0.6); font-size: 13px;
          font-family: Arial, sans-serif; color: white; max-width: 340px;">
-      <b style="font-size:15px">Helipontos de São Paulo</b><br>
+      <b style="font-size:15px">Helipontos de S\u00e3o Paulo</b><br>
       <span style="font-size:11px;color:#aaa">
         Fontes: ANAC + GeoSampa + SMUL<br>
         Total: {n_total} &nbsp;|&nbsp;
         Regulares: {n_regular} &nbsp;|&nbsp;
         <span style="color:#ff6b6b">Irregulares: {n_irregular}</span></span>
+
+      <hr style="border-color:#555;margin:8px 0">
+      <b style="font-size:13px">\U0001f4d0 DIMENS\u00d5ES</b><br>
+      <div style="margin-top:4px">
+        <span style="font-size:12px">\u2705 \u226521\u00d721 m: <b>{n_size_ok}</b></span><br>
+        <span style="font-size:12px;color:#e67e22">\u2753 Desconhecida: <b>{n_size_unk}</b>
+          <span style="font-size:10px">(borda tracejada)</span></span><br>
+      </div>
+      <span style="font-size:10px;color:#aaa">Use o painel de camadas (\u2630) para filtrar</span>
+
       <hr style="border-color:#555;margin:8px 0">
 
       <i style="background:#2ecc71;width:12px;height:12px;display:inline-block;
          border-radius:50%;margin-right:6px;border:1px solid white;"></i>
-      <b>Regular</b> — ANAC ativo + Licença SMUL ({n_regular})<br>
+      <b>Regular</b> \u2014 ANAC ativo + Licen\u00e7a SMUL ({n_regular})<br>
 
       <hr style="border-color:#555;margin:8px 0">
       <b style="color:#ff6b6b;font-size:13px">\u26a0 IRREGULARES</b><br>
       <div style="margin-top:4px">
         <i style="background:#c0392b;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #c0392b;"></i>
-        Sem <b>licença SMUL</b> ({n_sem_smul})<br>
+        Sem <b>licen\u00e7a SMUL</b> ({n_sem_smul})<br>
         <i style="background:#d35400;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #d35400;"></i>
-        Licença SMUL <b>vencida</b> ({n_smul_venc})<br>
+        Licen\u00e7a SMUL <b>vencida</b> ({n_smul_venc})<br>
         <i style="background:#e74c3c;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #e74c3c;"></i>
         Sem cadastro na <b>ANAC</b> ({n_no_anac})<br>
