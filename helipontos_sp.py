@@ -1765,6 +1765,15 @@ def main():
         action="store_true",
         help="Skip fetching dimensions/MTOW from AISWEB (use cache only).",
     )
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        default=21,
+        help=(
+            "Tamanho mínimo do heliponto em metros (default: 21). "
+            "Helipontos com ambas dimensões menores que este valor serão excluídos."
+        ),
+    )
     args = parser.parse_args()
 
     # --- Auto-detect local fallback files ---
@@ -1852,13 +1861,16 @@ def main():
         fetch_missing=not args.no_fetch_aisweb,
     )
 
-    # Step 6c: Filter by minimum helipad size (21×21 m)
-    gdf_result["tamanho_status"] = gdf_result["aisweb_dimensoes"].apply(_classify_size)
+    # Step 6c: Filter by minimum helipad size
+    min_sz = args.min_size
+    gdf_result["tamanho_status"] = gdf_result["aisweb_dimensoes"].apply(
+        lambda v: _classify_size(v, min_dim=min_sz)
+    )
     n_before = len(gdf_result)
     gdf_result = gdf_result[gdf_result["tamanho_status"] != "PEQUENO"].copy()
     log.info(
-        "Size filter (>=21x21): %d → %d heliports (%d removed as too small)",
-        n_before, len(gdf_result), n_before - len(gdf_result),
+        "Size filter (>=%dx%d): %d → %d heliports (%d removed as too small)",
+        min_sz, min_sz, n_before, len(gdf_result), n_before - len(gdf_result),
     )
 
     # Step 7: Outputs
