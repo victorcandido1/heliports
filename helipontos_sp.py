@@ -315,6 +315,21 @@ def enrich_with_aisweb(
     return gdf
 
 
+_RE_DIM = re.compile(r"(\d+)\s*[×x]\s*(\d+)")
+
+
+def _classify_size(val, min_dim=21):
+    """Classify helipad size: OK (≥min_dim), PEQUENO (<min_dim), DESCONHECIDO."""
+    if pd.isna(val) or not str(val).strip():
+        return "DESCONHECIDO"
+    m = _RE_DIM.search(str(val))
+    if not m:
+        return "DESCONHECIDO"
+    if int(m.group(1)) >= min_dim and int(m.group(2)) >= min_dim:
+        return "OK"
+    return "PEQUENO"
+
+
 def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
     """Load ANAC heliport data, filter to São Paulo city, return GeoDataFrame."""
 
@@ -1346,6 +1361,11 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
                 + " &mdash; ".join(parts)
                 + "</span><br>"
             )
+    else:
+        p.append(
+            "<span style='color:#e67e22;font-size:11px'>"
+            "\u26a0 Dimens\u00e3o desconhecida</span><br>"
+        )
     oaci_for_link = (row.get("anac_oaci") or row.get("gs_oaci") or "")
     if isinstance(oaci_for_link, str) and oaci_for_link.strip():
         aisweb_url = (
@@ -1460,11 +1480,15 @@ def build_map(
             iframe = IFrame(html=popup_html, width=420, height=420)
             return folium.Popup(iframe, max_width=450)
 
+        dim_unknown = row.get("tamanho_status") == "DESCONHECIDO"
+
         tooltip_text = (
             f"\u26a0 IRREGULAR — {nome}"
             if is_irregular
             else nome
         )
+        if dim_unknown:
+            tooltip_text += " (dimensão desconhecida)"
         tooltip_text += " (clique para detalhes)"
 
         fg = groups.get(status, list(groups.values())[0])
@@ -1500,12 +1524,13 @@ def build_map(
                 tooltip=tooltip_text,
             ).add_to(fg)
         else:
-            # Regular marker — smaller, subtler
+            # Regular marker — smaller, subtler; dashed border if dimension unknown
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=7,
-                color="white",
-                weight=1.5,
+                color="#e67e22" if dim_unknown else "white",
+                weight=2 if dim_unknown else 1.5,
+                dash_array="5 5" if dim_unknown else None,
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.85,
@@ -1671,6 +1696,7 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "aisweb_dimensoes",
         "aisweb_superficie",
         "aisweb_mtow",
+        "tamanho_status",
     ]
     available = [c for c in key_cols if c in gdf.columns]
 
@@ -1824,6 +1850,15 @@ def main():
     gdf_result = enrich_with_aisweb(
         gdf_result,
         fetch_missing=not args.no_fetch_aisweb,
+    )
+
+    # Step 6c: Filter by minimum helipad size (21×21 m)
+    gdf_result["tamanho_status"] = gdf_result["aisweb_dimensoes"].apply(_classify_size)
+    n_before = len(gdf_result)
+    gdf_result = gdf_result[gdf_result["tamanho_status"] != "PEQUENO"].copy()
+    log.info(
+        "Size filter (>=21x21): %d → %d heliports (%d removed as too small)",
+        n_before, len(gdf_result), n_before - len(gdf_result),
     )
 
     # Step 7: Outputs
