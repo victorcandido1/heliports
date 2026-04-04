@@ -97,6 +97,12 @@ _MESES_PT = [
     "jul", "ago", "set", "out", "nov", "dez",
 ]
 
+DOC_SEARCH_URL = (
+    "https://diariooficial.prefeitura.sp.gov.br/"
+    "md_epubli_controlador.php?acao=materias_pesquisar"
+)
+DOC_CACHE = "doc_helipontos_cache.json"
+
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
 OUTPUT_MAP = "mapa_helipontos_sp.html"
@@ -330,6 +336,149 @@ def enrich_with_aisweb(
 
 
 _RE_DIM = re.compile(r"(\d+)\s*[×x]\s*(\d+)")
+
+
+# ---------------------------------------------------------------------------
+# DOC — Diário Oficial da Cidade de São Paulo
+# ---------------------------------------------------------------------------
+
+
+def _search_doc_page(session, term: str, version: str = "A") -> list[dict]:
+    """Search DOC and return first page of results (up to 10)."""
+    data = {
+        "hdnTermoPesquisa": term,
+        "hdnTipoPesquisa": "Q",
+        "hdnVersaoDiario": version,
+        "hdnModoPesquisa": "RAPIDA",
+        "hdnTipoDataPesquisa": "I",
+        "hdnInicio": "0",
+        "hdnVisualizacao": "L",
+        "radioOndePesquisar": "C",
+    }
+    try:
+        from bs4 import BeautifulSoup
+        resp = session.post(DOC_SEARCH_URL, data=data, timeout=25)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        docs = soup.find_all("div", class_="dadosDocumento")
+        nav = re.findall(r"navegar\('(\d+)'\)", resp.text)
+        total = max([int(n) for n in nav]) + 10 if nav else len(docs)
+        results = []
+        for doc in docs:
+            text = doc.get_text(" ", strip=True)
+            proc_m = re.search(r"Processo:\s*([\d./-]+)", text)
+            doc_m = re.search(r"Documento:\s*(\d+)\s*-\s*([^P]+)", text)
+            pub_m = re.search(r"Publicado em (\d{2}/\d{2}/\d{4})", text)
+            cat_m = re.search(r"Processo:.*?-\s*([^D]+?)(?:Documento|$)", text)
+            results.append({
+                "processo": proc_m.group(1) if proc_m else "",
+                "tipo": doc_m.group(2).strip() if doc_m else "",
+                "data_pub": pub_m.group(1) if pub_m else "",
+                "categoria": cat_m.group(1).strip()[:60] if cat_m else "",
+                "texto": text[:400],
+            })
+        return results
+    except Exception as exc:
+        log.debug("DOC search error for '%s': %s", term, exc)
+        return []
+
+
+def _load_doc_cache(path: str = DOC_CACHE) -> dict:
+    p = Path(path)
+    if p.exists():
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_doc_cache(cache: dict, path: str = DOC_CACHE) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=0)
+    except OSError as exc:
+        log.warning("Could not save DOC cache: %s", exc)
+
+
+def enrich_with_doc(
+    gdf: gpd.GeoDataFrame,
+    fetch_missing: bool = True,
+    cache_path: str = DOC_CACHE,
+) -> gpd.GeoDataFrame:
+    """Enrich GeoDataFrame with Diário Oficial publications per heliport."""
+    cache = _load_doc_cache(cache_path)
+    gdf = gdf.copy()
+    gdf["doc_processos"] = None  # JSON string per row
+
+    session = None
+    if fetch_missing:
+        try:
+            session = requests.Session()
+            # Warm up session
+            session.get(DOC_SEARCH_URL, timeout=15)
+        except Exception:
+            session = None
+
+    n_fetched = 0
+    for idx, row in gdf.iterrows():
+        # Build a search key based on name
+        nome = row.get("gs_nome") or row.get("anac_nome") or ""
+        oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
+        if pd.isna(nome):
+            nome = ""
+        if pd.isna(oaci):
+            oaci = ""
+        nome = str(nome).strip()
+        oaci = str(oaci).strip().upper()
+
+        # Simplify name for search
+        search_name = nome
+        for prefix in [
+            "Heliponto Privado ", "Heliponto ", "Heliporto ",
+            "Cond. Ed. ", "Cond. ", "Ed. ", "Condomínio ",
+        ]:
+            if search_name.startswith(prefix):
+                search_name = search_name[len(prefix):]
+        search_name = re.sub(r"\s*[-–]\s*[A-Z]{2,4}\d*\s*$", "", search_name)
+        search_name = re.sub(r"\s*[-–]\s*SP\s*\d+\s*$", "", search_name)
+        search_name = search_name.strip(' "\'')
+
+        cache_key = f"{oaci}|{search_name}" if oaci else search_name
+        if not cache_key or len(cache_key) < 3:
+            continue
+
+        if cache_key in cache:
+            doc_data = cache[cache_key]
+        elif fetch_missing and session and len(search_name) >= 4:
+            term = f"heliponto {search_name}"
+            results = _search_doc_page(session, term)
+            # Filter to heliponto-related
+            heli = [r for r in results if "heliponto" in r["texto"].lower()
+                    or "heliporto" in r["texto"].lower()]
+            doc_data = heli if heli else None
+            cache[cache_key] = doc_data
+            n_fetched += 1
+            if n_fetched % 20 == 0:
+                log.info("DOC: searched %d heliports...", n_fetched)
+                _save_doc_cache(cache, cache_path)
+            time.sleep(0.25)
+        else:
+            doc_data = None
+
+        if doc_data:
+            gdf.at[idx, "doc_processos"] = json.dumps(
+                doc_data, ensure_ascii=False
+            )
+
+    if n_fetched:
+        _save_doc_cache(cache, cache_path)
+    n_with = gdf["doc_processos"].notna().sum()
+    log.info(
+        "DOC: fetched %d new, %d cached total, %d heliports with DOC data",
+        n_fetched, len(cache), int(n_with),
+    )
+    return gdf
 
 
 def _classify_size(val, min_dim=21):
@@ -1591,6 +1740,69 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
             "AISWEB — buscar pelo nome</a><br>"
         )
 
+    # ── SECTION: Diário Oficial (DOC) ──
+    doc_raw = row.get("doc_processos")
+    if pd.notna(doc_raw) and doc_raw:
+        try:
+            doc_items = json.loads(doc_raw) if isinstance(doc_raw, str) else doc_raw
+        except (json.JSONDecodeError, TypeError):
+            doc_items = None
+    else:
+        doc_items = None
+
+    p.append("<hr style='margin:4px 0'>")
+    if doc_items and isinstance(doc_items, list) and len(doc_items) > 0:
+        uid = f"doc_{hash(nome) % 99999}"
+        p.append(
+            "<details style='margin:2px 0'>"
+            "<summary style='cursor:pointer;font-size:11px;color:#34495e;"
+            "font-weight:bold'>"
+            f"\U0001f4f0 Diário Oficial ({len(doc_items)} publica\u00e7\u00f5es)"
+            "</summary>"
+            "<div style='margin-top:4px;max-height:200px;overflow-y:auto;"
+            "font-size:11px'>"
+        )
+        for item in doc_items:
+            proc = item.get("processo", "")
+            tipo = item.get("tipo", "")
+            data_pub = item.get("data_pub", "")
+            cat = item.get("categoria", "")
+            # Color code by type
+            if "fiscal" in cat.lower():
+                badge_bg = "#e74c3c"
+                badge_txt = "Fiscal"
+            elif "SISACOE" in cat or "Auto" in cat:
+                badge_bg = "#27ae60"
+                badge_txt = "ALFH"
+            elif "Comunique" in tipo:
+                badge_bg = "#e67e22"
+                badge_txt = "Notificação"
+            elif "Delibera" in tipo or "Despacho deferido" in tipo:
+                badge_bg = "#2980b9"
+                badge_txt = "Deliberação"
+            else:
+                badge_bg = "#7f8c8d"
+                badge_txt = tipo[:15] if tipo else "DOC"
+            p.append(
+                f"<div style='border-bottom:1px solid #eee;padding:3px 0'>"
+                f"<span style='background:{badge_bg};color:white;padding:1px 5px;"
+                f"border-radius:3px;font-size:10px;font-weight:bold'>"
+                f"{badge_txt}</span> "
+            )
+            if data_pub:
+                p.append(f"<b>{data_pub}</b> ")
+            if proc:
+                p.append(f"<span style='color:#7f8c8d'>{proc}</span> ")
+            if cat and "fiscal" not in cat.lower() and "SISACOE" not in cat:
+                p.append(f"<i>{cat[:40]}</i>")
+            p.append("</div>")
+        p.append("</div></details>")
+    else:
+        p.append(
+            "<span style='font-size:11px;color:#95a5a6'>"
+            "\U0001f4f0 DOC: Sem publica\u00e7\u00f5es encontradas</span><br>"
+        )
+
     p.append("</div>")
 
     return "".join(p)
@@ -1924,6 +2136,7 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "aisweb_superficie",
         "aisweb_mtow",
         "tamanho_status",
+        "doc_processos",
     ]
     available = [c for c in key_cols if c in gdf.columns]
 
@@ -2179,6 +2392,79 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
                 f"    <tr><td>{nome}</td><td>{auto}</td><td>{proc}</td><td>{vig_txt}</td></tr>"
             )
         smul_no_gs_html = "\n".join(rows)
+
+    # --- DOC (Diário Oficial) stats ---
+    doc_heliports_html = ""
+    n_doc_total = 0
+    n_doc_smul = 0
+    n_doc_fiscal = 0
+    if "doc_processos" in gdf.columns:
+        doc_rows_list = []
+        for _, r in gdf.iterrows():
+            raw = r.get("doc_processos")
+            if pd.isna(raw) or not raw:
+                continue
+            try:
+                items = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not items:
+                continue
+            nome = r.get("gs_nome") or r.get("anac_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            st = r.get("status_consolidado", "")
+            badge_cls = "badge-regular" if st == "REGULAR" else (
+                "badge-warn" if "VENCIDA" in st or "INATIVO" in st else "badge-irregular"
+            )
+            n_items = len(items)
+            # Classify items
+            smul_procs = [i for i in items if i.get("processo", "").startswith("6068")]
+            fiscal = [i for i in items if "fiscal" in i.get("categoria", "").lower()]
+            latest = items[0].get("data_pub", "-") if items else "-"
+            tipos = ", ".join(sorted(set(i.get("tipo", "")[:15] for i in items if i.get("tipo"))))[:40]
+            procs_str = ", ".join(sorted(set(i.get("processo", "") for i in items[:3] if i.get("processo"))))
+
+            n_doc_total += 1
+            if smul_procs:
+                n_doc_smul += 1
+            if fiscal:
+                n_doc_fiscal += 1
+
+            doc_rows_list.append({
+                "nome": nome,
+                "oaci": oaci,
+                "n_items": n_items,
+                "n_smul": len(smul_procs),
+                "n_fiscal": len(fiscal),
+                "latest": latest,
+                "tipos": tipos,
+                "procs": procs_str,
+                "status": st,
+                "badge_cls": badge_cls,
+            })
+
+        # Sort by most publications
+        doc_rows_list.sort(key=lambda x: -x["n_items"])
+        rows = []
+        for d in doc_rows_list[:30]:
+            smul_mark = (
+                '<span style="color:#e74c3c;font-weight:bold">Sim</span>'
+                if d["n_smul"] > 0 else '<span style="color:#95a5a6">Não</span>'
+            )
+            fiscal_mark = (
+                f'<span style="color:#e74c3c;font-weight:bold">{d["n_fiscal"]}</span>'
+                if d["n_fiscal"] > 0 else '<span style="color:#95a5a6">0</span>'
+            )
+            rows.append(
+                f'    <tr><td>{d["nome"][:40]}</td><td>{d["oaci"]}</td>'
+                f'<td><b>{d["n_items"]}</b></td><td>{d["latest"]}</td>'
+                f'<td>{smul_mark}</td><td>{fiscal_mark}</td>'
+                f'<td style="font-size:11px">{d["procs"][:40]}</td>'
+                f'<td><span class="status-badge {d["badge_cls"]}">{d["status"][:20]}</span></td></tr>'
+            )
+        doc_heliports_html = "\n".join(rows)
 
     # --- Spatial match stats ---
     dist = gdf["dist_metros"] if "dist_metros" in gdf.columns else pd.Series(dtype=float)
@@ -2439,28 +2725,27 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   </table>
 </div>
 
-<h2>6. Fiscalização — Diário Oficial da Cidade de SP</h2>
+<h2>6. Diário Oficial — Publicações por Heliponto</h2>
 <div class="section">
-  <p>Levantamento de publicações no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) relacionadas a helipontos, cobrindo publicações de março/2023 em diante.</p>
+  <p>Busca automatizada no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) por nome de cada heliponto. Inclui processos SMUL/CONTRU (licença), CADES/SVMA (ambiental) e ações fiscais.</p>
   <div class="grid">
-    <div class="card"><div class="number blue">151</div><div class="label">Processos SMUL/CONTRU no DOC</div></div>
-    <div class="card"><div class="number orange">119</div><div class="label">Não constam na planilha SMUL</div></div>
-    <div class="card"><div class="number red">94</div><div class="label">Com ação fiscal</div></div>
+    <div class="card"><div class="number blue">{n_doc_total}</div><div class="label">Helipontos com publicações DOC</div></div>
+    <div class="card"><div class="number orange">{n_doc_smul}</div><div class="label">Com processo SMUL (6068)</div></div>
+    <div class="card"><div class="number red">{n_doc_fiscal}</div><div class="label">Com ação fiscal</div></div>
   </div>
 
-  <h3>Busca por código OACI</h3>
-  <p>Dos 266 códigos OACI pesquisados, <b>10</b> foram encontrados em publicações do DOC (majoritariamente em processos CADES/SVMA de parecer ambiental).</p>
-
-  <h3>Busca por nome — Deferidos sem SMUL</h3>
-  <p>Dos 130 helipontos deferidos no GeoSampa sem licença SMUL, <b>39</b> foram encontrados no DOC. Desses, <b>23 têm processos SMUL (6068.xxxx)</b> — a Prefeitura já está agindo sobre eles com notificações e fiscalização.</p>
-
-  <p>A maioria das publicações são <b>"Comunique-se"</b> (notificações de ALFH — Auto de Licença de Funcionamento de Heliponto) e <b>"Despacho Documental"</b> referentes a ações fiscais por operação sem licença válida.</p>
+  <h3>Publicações por Heliponto</h3>
+  <p>Helipontos com mais publicações no DOC (pós-março/2023). A coluna "SMUL?" indica se há processos 6068.xxxx (licença de funcionamento).</p>
+  <table>
+    <tr><th>Heliponto</th><th>OACI</th><th>Pub.</th><th>Última</th><th>SMUL?</th><th>Fiscal</th><th>Processos</th><th>Status</th></tr>
+{doc_heliports_html}
+  </table>
+  <p style="font-size:11px;color:#7f8c8d">Exibindo até 30 helipontos. Cada popup do mapa contém a seção "Diário Oficial" com o histórico de publicações do heliponto.</p>
 
   <div style="background:#fff3e0;border-left:4px solid #e67e22;padding:12px 16px;margin:12px 0;border-radius:4px">
-    <b>Achado relevante:</b> 119 dos 151 processos SMUL publicados no DOC desde 2023 <b>não constam na planilha de autos SMUL</b>. Isso indica que são processos de fiscalização, notificação ou revalidação pendente — e não autos emitidos.<br>
-    <span style="font-size:12px;color:#7f8c8d">94 processos mencionam <b>ação fiscal</b>, confirmando que a CONTRU está fiscalizando ativamente helipontos sem licença de funcionamento vigente.</span>
+    <b>Nota:</b> A maioria das publicações são <b>"Comunique-se"</b> (notificações de ALFH) e <b>"Despacho Documental"</b> referentes a ações fiscais. Helipontos com processos SMUL ativos no DOC mas sem auto na planilha SMUL provavelmente estão em processo de regularização ou fiscalização.
   </div>
-  <p style="font-size:11px;color:#7f8c8d">Fonte: busca no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023. Buscas por "heliponto funcionamento", códigos OACI e nomes de helipontos.</p>
+  <p style="font-size:11px;color:#7f8c8d">Fonte: busca automatizada no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023.</p>
 </div>
 
 <h2>7. Distribuição Geográfica (Top 10 Distritos)</h2>
@@ -2579,6 +2864,11 @@ def main():
         help="Skip fetching dimensions/MTOW from AISWEB (use cache only).",
     )
     parser.add_argument(
+        "--no-fetch-doc",
+        action="store_true",
+        help="Skip fetching DOC publications (use cache only).",
+    )
+    parser.add_argument(
         "--min-size",
         type=int,
         default=21,
@@ -2680,6 +2970,12 @@ def main():
     gdf_result = enrich_with_aisweb(
         gdf_result,
         fetch_missing=not args.no_fetch_aisweb,
+    )
+
+    # Step 6b2: Enrich with DOC (Diário Oficial)
+    gdf_result = enrich_with_doc(
+        gdf_result,
+        fetch_missing=not args.no_fetch_doc,
     )
 
     # Step 6c: Filter by minimum helipad size
