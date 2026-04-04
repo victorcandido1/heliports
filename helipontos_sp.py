@@ -1515,8 +1515,23 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
         p.append(
             "<b style='color:#e74c3c;font-size:11px'>"
             "\U0001f4cb SMUL:</b> "
-            "<span style='color:#e74c3c'>Sem licen\u00e7a</span><br>"
+            "<span style='color:#e74c3c'>Sem licen\u00e7a de funcionamento</span><br>"
         )
+        # Show CADES parecer info if available (different from SMUL)
+        gs_parecer = _fmt(row.get("cd_parecer_tecnico"))
+        gs_doc_pub = row.get("dt_publicacao_diario_oficial")
+        if gs_parecer:
+            p.append(
+                f"<span style='font-size:11px;color:#7f8c8d'>"
+                f"Parecer CADES (ambiental): {gs_parecer}"
+            )
+            if pd.notna(gs_doc_pub):
+                doc_str = str(gs_doc_pub)[:10].replace("Z", "")
+                doc_dt = pd.to_datetime(doc_str, errors="coerce")
+                if pd.notna(doc_dt):
+                    age_years = (pd.Timestamp.now() - doc_dt).days / 365
+                    p.append(f" ({doc_dt.strftime('%d/%m/%Y')} — {age_years:.0f} anos)")
+            p.append("</span><br>")
 
     # ── SECTION: Localização ──
     p.append("<hr style='margin:4px 0'>")
@@ -2076,27 +2091,74 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
         n_alerts = len(expired) + len(expiring)
 
     # --- Divergências GeoSampa vs SMUL ---
-    # GeoSampa deferidos sem SMUL
+    # GeoSampa deferidos sem SMUL — classified by CADES parecer age
     gs_def_no_smul_html = ""
+    gs_recentes_html = ""
     n_gs_def_no_smul = 0
+    n_gs_cades_recente = 0
+    n_gs_cades_antigo = 0
     if "gs_situacao" in gdf.columns:
         gs_def_no_smul = gdf[
             (gdf["gs_situacao"].fillna("").str.contains("Deferido", case=False)) &
             (gdf.get("smul_licenciado", pd.Series([False] * n_total)) != True)
         ]
         n_gs_def_no_smul = len(gs_def_no_smul)
+
+        # Classify by CADES parecer date (Auto SMUL valid for 5 years)
+        now_ts = pd.Timestamp.now()
+        recentes = []
+        antigos = []
+        for _, r in gs_def_no_smul.iterrows():
+            doc_raw = str(r.get("dt_publicacao_diario_oficial") or "").replace("Z", "")
+            doc_dt = pd.to_datetime(doc_raw, errors="coerce")
+            age_days = (now_ts - doc_dt).days if pd.notna(doc_dt) else 9999
+            entry = (r, doc_dt, age_days)
+            if age_days <= 5 * 365:
+                recentes.append(entry)
+            else:
+                antigos.append(entry)
+
+        n_gs_cades_recente = len(recentes)
+        n_gs_cades_antigo = len(antigos)
+
+        # Table for recent ones (potential valid auto)
+        recentes.sort(key=lambda x: x[1] if pd.notna(x[1]) else pd.Timestamp.min, reverse=True)
         rows = []
-        for _, r in gs_def_no_smul.head(20).iterrows():
+        for r, doc_dt, age_days in recentes:
             nome = r.get("gs_nome") or "?"
             oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
             if pd.isna(oaci):
                 oaci = "-"
-            endereco = r.get("gs_endereco") or "-"
-            distrito = r.get("nm_distrito_municipal") or "-"
-            gs_proc = r.get("cd_processo_administrativo_heliponto") or "-"
+            doc_str = doc_dt.strftime("%d/%m/%Y") if pd.notna(doc_dt) else "-"
+            parecer = r.get("cd_parecer_tecnico") or "-"
+            meses = age_days // 30
+            doc_link = r.get("tx_link_diario_oficial") or ""
+            doc_cell = (
+                f"<a href='{doc_link}' target='_blank'>{doc_str}</a>"
+                if doc_link else doc_str
+            )
             rows.append(
-                f"    <tr><td>{nome}</td><td>{oaci}</td><td>{endereco}</td>"
-                f"<td>{distrito}</td><td>{gs_proc}</td></tr>"
+                f"    <tr><td>{nome}</td><td>{oaci}</td>"
+                f"<td>{doc_cell}</td><td>{parecer}</td>"
+                f"<td>{meses} meses</td></tr>"
+            )
+        gs_recentes_html = "\n".join(rows)
+
+        # Table for old ones (likely expired)
+        antigos.sort(key=lambda x: x[1] if pd.notna(x[1]) else pd.Timestamp.min, reverse=True)
+        rows = []
+        for r, doc_dt, age_days in antigos[:20]:
+            nome = r.get("gs_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            doc_str = doc_dt.strftime("%d/%m/%Y") if pd.notna(doc_dt) else "-"
+            anos = age_days // 365
+            endereco = r.get("gs_endereco") or "-"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td>"
+                f"<td>{doc_str}</td><td>{anos} anos</td>"
+                f"<td>{endereco}</td></tr>"
             )
         gs_def_no_smul_html = "\n".join(rows)
 
@@ -2337,18 +2399,40 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
 
 <h2>5. Divergências GeoSampa vs SMUL</h2>
 <div class="section">
-  <p>Cruzamento entre a base GeoSampa (cadastro de helipontos da Prefeitura) e a planilha SMUL (autos de licença de funcionamento).</p>
+  <p>Cruzamento entre a base GeoSampa (cadastro de helipontos da Prefeitura) e a planilha SMUL (autos de licença de funcionamento). Total de <b>{n_gs_def_no_smul}</b> helipontos deferidos sem licença SMUL.</p>
 
-  <h3>Deferidos no GeoSampa sem Licença SMUL ({n_gs_def_no_smul})</h3>
-  <p style="color:#e67e22">Helipontos com processo <b>deferido</b> na Prefeitura (GeoSampa), mas sem auto de licença na SMUL — possivelmente operando sem licença de funcionamento vigente.</p>
+  <div style="background:#eef6ff;border-left:4px solid #2980b9;padding:12px 16px;margin:12px 0;border-radius:4px">
+    <b>CADES vs SMUL — processos distintos</b><br>
+    <span style="font-size:12px">
+      O <b>parecer CADES</b> (proc. 6027.xxxx) é a aprovação <b>ambiental</b> publicada no DOC.<br>
+      O <b>auto de licença SMUL</b> (proc. 6068.xxxx) é a <b>licença de funcionamento</b>, também publicada no DOC.<br>
+      São processos independentes — ter parecer CADES deferido <b>não significa</b> ter licença SMUL vigente.<br>
+      Conforme Decreto 58.094/2018, art. 9º §2º, o auto SMUL é válido por <b>5 anos</b> e deve ser revalidado.
+    </span>
+  </div>
+
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="number orange">{n_gs_cades_recente}</div><div class="label">Parecer CADES recente (&le;5 anos)</div></div>
+    <div class="card"><div class="number red">{n_gs_cades_antigo}</div><div class="label">Parecer CADES antigo (&gt;5 anos)</div></div>
+  </div>
+
+  <h3>Parecer CADES recente — podem ter auto SMUL pendente ({n_gs_cades_recente})</h3>
+  <p style="color:#e67e22">Helipontos com parecer ambiental CADES publicado no DOC nos últimos 5 anos, mas sem auto de licença SMUL na planilha. Podem estar em processo de obtenção da licença ou terem auto não registrado na planilha.</p>
   <table>
-    <tr><th>Nome</th><th>OACI</th><th>Endereço</th><th>Distrito</th><th>Processo GeoSampa</th></tr>
+    <tr><th>Nome</th><th>OACI</th><th>Publicação DOC</th><th>Parecer CADES</th><th>Idade</th></tr>
+{gs_recentes_html}
+  </table>
+
+  <h3>Parecer CADES antigo — provavelmente sem licença válida ({n_gs_cades_antigo})</h3>
+  <p style="color:#e74c3c">Helipontos com parecer ambiental CADES há mais de 5 anos e sem auto SMUL. Conforme Decreto 58.094/2018, autos anteriores devem ser renovados na revalidação — estes provavelmente operam sem licença de funcionamento vigente.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Publicação DOC</th><th>Idade</th><th>Endereço</th></tr>
 {gs_def_no_smul_html}
   </table>
-  <p style="font-size:11px;color:#7f8c8d">Exibindo até 20 registros.</p>
+  <p style="font-size:11px;color:#7f8c8d">Exibindo até 20 dos {n_gs_cades_antigo} registros.</p>
 
   <h3>Licença SMUL sem Cadastro no GeoSampa ({n_smul_no_gs})</h3>
-  <p style="color:#e67e22">Helipontos com auto de licença SMUL emitido, mas sem correspondência na base GeoSampa — possível divergência cadastral.</p>
+  <p style="color:#e67e22">Helipontos com auto de licença SMUL emitido e publicado no DOC, mas sem correspondência na base GeoSampa — possível divergência cadastral.</p>
   <table>
     <tr><th>Nome SMUL</th><th>Nº Auto</th><th>Processo</th><th>Situação</th></tr>
 {smul_no_gs_html}
@@ -2391,9 +2475,9 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     <li style="margin-bottom:10px"><b>{n_priv} helipontos são privados</b> e <b>{n_mil} são militares</b>.</li>
     <li style="margin-bottom:10px"><b>{total_ciclos} ciclos/dia estão autorizados</b> no total, com média de {media_ciclos} por heliponto.</li>
     <li style="margin-bottom:10px"><b>{n_vfr_diurno} helipontos operam apenas de dia</b> (VFR Diurna) — não aceitam pousos noturnos.</li>
-    <li style="margin-bottom:10px"><b>{n_gs_def_no_smul} helipontos deferidos no GeoSampa não possuem licença SMUL</b>, indicando possível operação sem licença de funcionamento.</li>
+    <li style="margin-bottom:10px"><b>{n_gs_def_no_smul} helipontos deferidos no GeoSampa não possuem licença SMUL</b>: {n_gs_cades_recente} com parecer CADES recente (possível auto pendente) e {n_gs_cades_antigo} com parecer antigo (provavelmente sem licença válida).</li>
     <li style="margin-bottom:10px"><b>{n_smul_no_gs} licenças SMUL não têm correspondência no GeoSampa</b>, sugerindo divergência entre as bases da Prefeitura.</li>
-    <li style="margin-bottom:10px"><b>Todo auto de licença SMUL é publicado no Diário Oficial da Cidade de São Paulo</b> — as datas de publicação estão registradas na planilha.</li>
+    <li style="margin-bottom:10px"><b>CADES (ambiental) e SMUL (licença de funcionamento) são processos distintos</b>, ambos publicados no Diário Oficial da Cidade de São Paulo. Ter parecer CADES deferido não garante licença SMUL vigente.</li>
     <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
   </ol>
 </div>
