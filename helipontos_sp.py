@@ -1803,6 +1803,22 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
             "\U0001f4f0 DOC: Sem publica\u00e7\u00f5es encontradas</span><br>"
         )
 
+    # ── SECTION: Jurisprudência TJSP ──
+    search_name = nome.replace("Heliponto ", "").replace("Privado ", "").strip()
+    if search_name:
+        cjsg_url = (
+            "https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do?"
+            f"dados.buscaInteiroTeor=heliponto+{search_name.replace(' ', '+')}"
+            "&dados.pesquisarComSinonimos=S&tipoDecisaoSelecionados=A"
+            "&dados.ordenarPor=dtPublicacao"
+        )
+        p.append("<hr style='margin:4px 0'>")
+        p.append(
+            f"<a href='{cjsg_url}' target='_blank' "
+            "style='color:#8e44ad;text-decoration:underline;font-size:11px'>"
+            "\u2696 Buscar jurisprud\u00eancia TJSP</a><br>"
+        )
+
     p.append("</div>")
 
     return "".join(p)
@@ -2516,6 +2532,91 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
             )
         top_ciclos_html = "\n".join(rows)
 
+    # --- Jurisprudência TJSP ---
+    juris_html = ""
+    n_juris = 0
+    juris_by_tema = {}
+    juris_by_year = {}
+    juris_destaque = []
+    juris_file = Path("tjsp_acordaos_classificados.json")
+    if juris_file.exists():
+        try:
+            with open(juris_file, encoding="utf-8") as _jf:
+                juris_data = json.load(_jf)
+            n_juris = len(juris_data)
+            for jd in juris_data:
+                for t in jd.get("temas", []):
+                    juris_by_tema[t] = juris_by_tema.get(t, 0) + 1
+                m = re.search(r"(\d{4})", jd.get("data", ""))
+                if m:
+                    y = m.group(1)
+                    juris_by_year[y] = juris_by_year.get(y, 0) + 1
+                # Highlight cases specifically about SP capital licensing
+                ementa_l = (jd.get("ementa") or "").lower()
+                comarca_l = (jd.get("comarca") or "").lower()
+                is_sp_capital = "são paulo" in comarca_l or "so paulo" in comarca_l or "capital" in ementa_l
+                is_licensing = any(
+                    k in ementa_l
+                    for k in ["licença de funcionamento", "interdição de heliponto", "auto de licença",
+                              "lei 15.723", "lei 15723", "mandado de segurança"]
+                )
+                if is_sp_capital and is_licensing:
+                    juris_destaque.append(jd)
+
+            # Build tema table
+            tema_labels = {
+                "ambiental": "Ambiental (SVMA/CETESB)",
+                "multa": "Multa / Auto de infração",
+                "ANAC": "ANAC vs Município",
+                "EIV": "Estudo de Impacto de Vizinhança",
+                "licença_funcionamento": "Licença de funcionamento",
+                "interdição": "Interdição",
+                "cassação": "Cassação de licença",
+                "direito_adquirido": "Direito adquirido",
+                "Lei_15723": "Lei 15.723/2013",
+                "Lei_16402": "Lei 16.402/2016",
+                "ruído": "Poluição sonora / Ruído",
+                "vizinhança": "Direito de vizinhança",
+                "MS": "Mandado de segurança",
+                "ACP": "Ação civil pública",
+                "outro": "Outros temas",
+            }
+            tema_rows = []
+            for tema, count in sorted(juris_by_tema.items(), key=lambda x: -x[1]):
+                label = tema_labels.get(tema, tema)
+                tema_rows.append(f'    <tr><td>{label}</td><td><b>{count}</b></td></tr>')
+            juris_tema_html = "\n".join(tema_rows)
+
+            # Build highlight cases table (SP capital licensing)
+            destaque_rows = []
+            for jd in sorted(juris_destaque, key=lambda x: x.get("data", ""), reverse=True)[:15]:
+                proc = jd.get("processo", "?")
+                data = jd.get("data", "?")[:12]
+                temas = ", ".join(jd.get("temas", []))
+                ementa_short = (jd.get("ementa") or "")[:200]
+                # Clean encoding
+                ementa_short = re.sub(r"<U\+[0-9A-F]+>", "", ementa_short)
+                cd = jd.get("cd_acordao", "")
+                link = ""
+                if cd:
+                    link = f' <a href="https://esaj.tjsp.jus.br/cjsg/getArquivo.do?cdAcordao={cd}&cdForo=0" target="_blank" style="font-size:10px">[PDF]</a>'
+                destaque_rows.append(
+                    f'    <tr><td style="font-size:11px">{proc}{link}</td>'
+                    f"<td>{data}</td>"
+                    f"<td style='font-size:11px'>{temas}</td>"
+                    f"<td style='font-size:11px'>{ementa_short}...</td></tr>"
+                )
+            juris_destaque_html = "\n".join(destaque_rows)
+
+            # Timeline by year
+            year_cells = []
+            for y in sorted(juris_by_year.keys()):
+                year_cells.append(f"<td><b>{juris_by_year[y]}</b><br><span style='font-size:10px'>{y}</span></td>")
+            juris_timeline_html = "".join(year_cells)
+
+        except Exception as exc:
+            log.warning("Could not load TJSP data: %s", exc)
+
     # --- Status bar segments ---
     def _bar_seg(n, color, title):
         w = n / n_total * 100 if n_total else 0
@@ -2773,7 +2874,46 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   </table>
 </div>
 
-<h2>9. Conclusões e Achados Principais</h2>
+<h2>9. Jurisprudência TJSP — Acórdãos sobre Helipontos</h2>
+<div class="section">
+  <p>Busca automatizada no sistema CJSG do TJSP (Tribunal de Justiça de São Paulo) por acórdãos contendo "heliponto" no inteiro teor.</p>
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_juris}</div><div class="label">Acórdãos encontrados</div></div>
+    <div class="card"><div class="number orange">{len(juris_destaque)}</div><div class="label">SP Capital — Licenciamento</div></div>
+  </div>
+
+  <h3>Distribuição por Tema</h3>
+  <table>
+    <tr><th>Tema</th><th>Acórdãos</th></tr>
+{juris_tema_html}
+  </table>
+
+  <h3>Evolução Temporal</h3>
+  <div style="overflow-x:auto">
+    <table><tr style="text-align:center">{juris_timeline_html}</tr></table>
+  </div>
+
+  <h3>Casos Relevantes — São Paulo Capital (Licenciamento)</h3>
+  <p style="font-size:12px;color:#7f8c8d">Acórdãos sobre licenciamento de helipontos na Comarca de São Paulo, ordenados por data.</p>
+  <table>
+    <tr><th>Processo</th><th>Data</th><th>Temas</th><th>Ementa (trecho)</th></tr>
+{juris_destaque_html}
+  </table>
+
+  <div style="background:#eef6ff;border-left:4px solid #2980b9;padding:12px 16px;margin:12px 0;border-radius:4px">
+    <b>Principais teses jurisprudenciais:</b><br>
+    <span style="font-size:12px">
+    1. <b>ANAC não supre licença municipal</b> — autorização federal tem escopo diverso do controle urbanístico.<br>
+    2. <b>Interdição mantida sem licença</b> — operação sem auto SMUL é irregular, mesmo com registro ANAC ativo.<br>
+    3. <b>Direito adquirido de pré-existentes</b> — helipontos anteriores a nova legislação podem ter proteção contra retroatividade.<br>
+    4. <b>EIV obrigatório</b> — indeferimento por distância mínima de escola (300m → 200m) é legítimo.<br>
+    5. <b>Multa renovada a cada 15 dias</b> — desobediência à interdição gera multa contínua + inquérito policial.
+    </span>
+  </div>
+  <p style="font-size:11px;color:#7f8c8d">Fonte: CJSG/ESAJ TJSP (esaj.tjsp.jus.br). Busca por "heliponto" no inteiro teor de acórdãos. Script: buscar_tjsp_heliponto.R</p>
+</div>
+
+<h2>10. Conclusões e Achados Principais</h2>
 <div class="section">
   <ol style="padding-left:20px">
     <li style="margin-bottom:10px"><b>Apenas {pct(n_regular)} dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros {pct(n_irregular)} apresentam alguma irregularidade.</li>
@@ -2788,6 +2928,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     <li style="margin-bottom:10px"><b>{n_smul_no_gs} licenças SMUL não têm correspondência no GeoSampa</b>, sugerindo divergência entre as bases da Prefeitura.</li>
     <li style="margin-bottom:10px"><b>CADES (ambiental) e SMUL (licença de funcionamento) são processos distintos</b>, ambos publicados no Diário Oficial da Cidade de São Paulo. Ter parecer CADES deferido não garante licença SMUL vigente.</li>
     <li style="margin-bottom:10px"><b>A CONTRU está fiscalizando ativamente</b>: 94 processos no DOC desde 2023 mencionam ação fiscal por operação sem licença de funcionamento de heliponto vigente.</li>
+    <li style="margin-bottom:10px"><b>{n_juris} acórdãos do TJSP</b> mencionam "heliponto", com teses consolidadas: ANAC não supre licença municipal, interdição por falta de auto SMUL é legal, EIV é obrigatório, e multa é renovada a cada 15 dias por desobediência.</li>
     <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
   </ol>
 </div>
