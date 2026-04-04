@@ -2439,7 +2439,23 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   </table>
 </div>
 
-<h2>6. Distribuição Geográfica (Top 10 Distritos)</h2>
+<h2>6. Fiscalização — Diário Oficial da Cidade de SP</h2>
+<div class="section">
+  <p>Levantamento de publicações no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) relacionadas a processos SMUL/CONTRU (6068.xxxx) de helipontos, cobrindo publicações de março/2023 em diante.</p>
+  <div class="grid">
+    <div class="card"><div class="number blue">151</div><div class="label">Processos SMUL no DOC</div></div>
+    <div class="card"><div class="number orange">119</div><div class="label">Não constam na planilha SMUL</div></div>
+    <div class="card"><div class="number red">94</div><div class="label">Com ação fiscal</div></div>
+  </div>
+  <p>A maioria das publicações são <b>"Comunique-se"</b> (notificações de ALFH — Auto de Licença de Funcionamento de Heliponto) e <b>"Despacho Documental"</b> referentes a ações fiscais por operação sem licença válida.</p>
+  <div style="background:#fff3e0;border-left:4px solid #e67e22;padding:12px 16px;margin:12px 0;border-radius:4px">
+    <b>Achado relevante:</b> 119 dos 151 processos SMUL publicados no DOC desde 2023 <b>não constam na planilha de autos SMUL</b>. Isso indica que são processos de fiscalização, notificação ou revalidação pendente — e não autos emitidos.<br>
+    <span style="font-size:12px;color:#7f8c8d">94 processos mencionam <b>ação fiscal</b>, confirmando que a CONTRU está fiscalizando ativamente helipontos sem licença de funcionamento vigente.</span>
+  </div>
+  <p style="font-size:11px;color:#7f8c8d">Fonte: busca por "heliponto funcionamento" no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023. Processos identificados pelo padrão 6068.xxxx (SMUL/CONTRU).</p>
+</div>
+
+<h2>7. Distribuição Geográfica (Top 10 Distritos)</h2>
 <div class="section">
   <table>
     <tr><th>Distrito</th><th>Helipontos</th><th>% do Total</th></tr>
@@ -2448,7 +2464,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   <p style="color:#7f8c8d;font-size:12px;margin-top:8px">Nota: Helipontos cadastrados apenas na ANAC (sem GeoSampa) não possuem distrito informado.</p>
 </div>
 
-<h2>7. Qualidade do Cruzamento de Dados</h2>
+<h2>8. Qualidade do Cruzamento de Dados</h2>
 <div class="section">
   <p>O cruzamento GeoSampa &times; ANAC utiliza uma estratégia multi-passe: (1) código OACI exato, (2) proximidade espacial (raio de 100m), (3) correspondência por nome.</p>
   <table>
@@ -2464,7 +2480,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   </table>
 </div>
 
-<h2>8. Conclusões e Achados Principais</h2>
+<h2>9. Conclusões e Achados Principais</h2>
 <div class="section">
   <ol style="padding-left:20px">
     <li style="margin-bottom:10px"><b>Apenas {pct(n_regular)} dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros {pct(n_irregular)} apresentam alguma irregularidade.</li>
@@ -2478,6 +2494,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     <li style="margin-bottom:10px"><b>{n_gs_def_no_smul} helipontos deferidos no GeoSampa não possuem licença SMUL</b>: {n_gs_cades_recente} com parecer CADES recente (possível auto pendente) e {n_gs_cades_antigo} com parecer antigo (provavelmente sem licença válida).</li>
     <li style="margin-bottom:10px"><b>{n_smul_no_gs} licenças SMUL não têm correspondência no GeoSampa</b>, sugerindo divergência entre as bases da Prefeitura.</li>
     <li style="margin-bottom:10px"><b>CADES (ambiental) e SMUL (licença de funcionamento) são processos distintos</b>, ambos publicados no Diário Oficial da Cidade de São Paulo. Ter parecer CADES deferido não garante licença SMUL vigente.</li>
+    <li style="margin-bottom:10px"><b>A CONTRU está fiscalizando ativamente</b>: 94 processos no DOC desde 2023 mencionam ação fiscal por operação sem licença de funcionamento de heliponto vigente.</li>
     <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
   </ol>
 </div>
