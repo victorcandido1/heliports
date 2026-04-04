@@ -88,15 +88,26 @@ GEOSAMPA_LAYER_NAMES = [
 ]
 
 # SMUL — Planilha de Autos de Licença de Funcionamento emitidos pela Prefeitura.
-SMUL_XLSX_URL = (
+SMUL_XLSX_BASE = (
     "https://prefeitura.sp.gov.br/documents/d/licenciamento/"
-    "auto_de_licenca_de_helipontos_emitidos_por_smul_fev-2026-xlsx"
+    "auto_de_licenca_de_helipontos_emitidos_por_smul_{month}-{year}-xlsx"
 )
+_MESES_PT = [
+    "jan", "fev", "mar", "abr", "mai", "jun",
+    "jul", "ago", "set", "out", "nov", "dez",
+]
+
+DOC_SEARCH_URL = (
+    "https://diariooficial.prefeitura.sp.gov.br/"
+    "md_epubli_controlador.php?acao=materias_pesquisar"
+)
+DOC_CACHE = "doc_helipontos_cache.json"
 
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
 OUTPUT_MAP = "mapa_helipontos_sp.html"
-DASHBOARD_URL = "relatorio_helipontos_sp.html"  # relativo ao mapa (mesmo dir)
+OUTPUT_REPORT = "relatorio_helipontos_sp.html"
+DASHBOARD_URL = OUTPUT_REPORT  # relativo ao mapa (mesmo dir)
 AISWEB_CACHE = "aisweb_helipontos_cache.json"
 AISWEB_BASE_URL = "https://aisweb.decea.mil.br/?i=aerodromos&codigo="
 
@@ -182,9 +193,11 @@ def dms_to_decimal(raw: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _download_with_retries(url: str, timeout: int = 30) -> requests.Response | None:
+def _download_with_retries(
+    url: str, timeout: int = 30, max_retries: int = 3
+) -> requests.Response | None:
     """Try downloading *url* with simple retry logic."""
-    for attempt in range(3):
+    for attempt in range(max_retries):
         try:
             resp = requests.get(url, timeout=timeout, allow_redirects=True)
             if resp.status_code == 200:
@@ -289,16 +302,22 @@ def enrich_with_aisweb(
             oacis.add(o)
 
     n_fetched = 0
+    n_to_fetch = sum(1 for o in oacis if o not in cache) if fetch_missing else 0
+    if n_to_fetch:
+        log.info("AISWEB: %d OACIs to fetch (%d already cached)", n_to_fetch, len(cache))
+
     for oaci in sorted(oacis):
         if oaci in cache:
             data = cache[oaci]
         elif fetch_missing:
             data = _fetch_aisweb_oaci(oaci)
-            if data:
-                cache[oaci] = data
-                n_fetched += 1
-                save_aisweb_cache(cache, cache_path)  # salva a cada novo
-                time.sleep(0.15)  # rate limit para não sobrecarregar AISWEB
+            # Cache both hits and misses (None) to avoid re-fetching
+            cache[oaci] = data
+            n_fetched += 1
+            if n_fetched % 10 == 0 or n_fetched == n_to_fetch:
+                log.info("AISWEB: fetched %d/%d ...", n_fetched, n_to_fetch)
+            save_aisweb_cache(cache, cache_path)
+            time.sleep(0.15)  # rate limit
         else:
             data = None
 
@@ -307,7 +326,8 @@ def enrich_with_aisweb(
             gdf.loc[mask, "aisweb_dimensoes"] = data.get("dimensoes")
             gdf.loc[mask, "aisweb_mtow"] = data.get("mtow_display")
             gdf.loc[mask, "aisweb_superficie"] = data.get("superficie")
-        log.info("AISWEB: fetched %d new records, cached %d total", n_fetched, len(cache))
+
+    log.info("AISWEB: fetched %d new records, cached %d total", n_fetched, len(cache))
 
     n_with_data = gdf["aisweb_dimensoes"].notna().sum()
     log.info("AISWEB: %d heliports with dimensions/MTOW data", int(n_with_data))
@@ -316,6 +336,149 @@ def enrich_with_aisweb(
 
 
 _RE_DIM = re.compile(r"(\d+)\s*[×x]\s*(\d+)")
+
+
+# ---------------------------------------------------------------------------
+# DOC — Diário Oficial da Cidade de São Paulo
+# ---------------------------------------------------------------------------
+
+
+def _search_doc_page(session, term: str, version: str = "A") -> list[dict]:
+    """Search DOC and return first page of results (up to 10)."""
+    data = {
+        "hdnTermoPesquisa": term,
+        "hdnTipoPesquisa": "Q",
+        "hdnVersaoDiario": version,
+        "hdnModoPesquisa": "RAPIDA",
+        "hdnTipoDataPesquisa": "I",
+        "hdnInicio": "0",
+        "hdnVisualizacao": "L",
+        "radioOndePesquisar": "C",
+    }
+    try:
+        from bs4 import BeautifulSoup
+        resp = session.post(DOC_SEARCH_URL, data=data, timeout=25)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        docs = soup.find_all("div", class_="dadosDocumento")
+        nav = re.findall(r"navegar\('(\d+)'\)", resp.text)
+        total = max([int(n) for n in nav]) + 10 if nav else len(docs)
+        results = []
+        for doc in docs:
+            text = doc.get_text(" ", strip=True)
+            proc_m = re.search(r"Processo:\s*([\d./-]+)", text)
+            doc_m = re.search(r"Documento:\s*(\d+)\s*-\s*([^P]+)", text)
+            pub_m = re.search(r"Publicado em (\d{2}/\d{2}/\d{4})", text)
+            cat_m = re.search(r"Processo:.*?-\s*([^D]+?)(?:Documento|$)", text)
+            results.append({
+                "processo": proc_m.group(1) if proc_m else "",
+                "tipo": doc_m.group(2).strip() if doc_m else "",
+                "data_pub": pub_m.group(1) if pub_m else "",
+                "categoria": cat_m.group(1).strip()[:60] if cat_m else "",
+                "texto": text[:400],
+            })
+        return results
+    except Exception as exc:
+        log.debug("DOC search error for '%s': %s", term, exc)
+        return []
+
+
+def _load_doc_cache(path: str = DOC_CACHE) -> dict:
+    p = Path(path)
+    if p.exists():
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_doc_cache(cache: dict, path: str = DOC_CACHE) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=0)
+    except OSError as exc:
+        log.warning("Could not save DOC cache: %s", exc)
+
+
+def enrich_with_doc(
+    gdf: gpd.GeoDataFrame,
+    fetch_missing: bool = True,
+    cache_path: str = DOC_CACHE,
+) -> gpd.GeoDataFrame:
+    """Enrich GeoDataFrame with Diário Oficial publications per heliport."""
+    cache = _load_doc_cache(cache_path)
+    gdf = gdf.copy()
+    gdf["doc_processos"] = None  # JSON string per row
+
+    session = None
+    if fetch_missing:
+        try:
+            session = requests.Session()
+            # Warm up session
+            session.get(DOC_SEARCH_URL, timeout=15)
+        except Exception:
+            session = None
+
+    n_fetched = 0
+    for idx, row in gdf.iterrows():
+        # Build a search key based on name
+        nome = row.get("gs_nome") or row.get("anac_nome") or ""
+        oaci = row.get("gs_oaci") or row.get("anac_oaci") or ""
+        if pd.isna(nome):
+            nome = ""
+        if pd.isna(oaci):
+            oaci = ""
+        nome = str(nome).strip()
+        oaci = str(oaci).strip().upper()
+
+        # Simplify name for search
+        search_name = nome
+        for prefix in [
+            "Heliponto Privado ", "Heliponto ", "Heliporto ",
+            "Cond. Ed. ", "Cond. ", "Ed. ", "Condomínio ",
+        ]:
+            if search_name.startswith(prefix):
+                search_name = search_name[len(prefix):]
+        search_name = re.sub(r"\s*[-–]\s*[A-Z]{2,4}\d*\s*$", "", search_name)
+        search_name = re.sub(r"\s*[-–]\s*SP\s*\d+\s*$", "", search_name)
+        search_name = search_name.strip(' "\'')
+
+        cache_key = f"{oaci}|{search_name}" if oaci else search_name
+        if not cache_key or len(cache_key) < 3:
+            continue
+
+        if cache_key in cache:
+            doc_data = cache[cache_key]
+        elif fetch_missing and session and len(search_name) >= 4:
+            term = f"heliponto {search_name}"
+            results = _search_doc_page(session, term)
+            # Filter to heliponto-related
+            heli = [r for r in results if "heliponto" in r["texto"].lower()
+                    or "heliporto" in r["texto"].lower()]
+            doc_data = heli if heli else None
+            cache[cache_key] = doc_data
+            n_fetched += 1
+            if n_fetched % 20 == 0:
+                log.info("DOC: searched %d heliports...", n_fetched)
+                _save_doc_cache(cache, cache_path)
+            time.sleep(0.25)
+        else:
+            doc_data = None
+
+        if doc_data:
+            gdf.at[idx, "doc_processos"] = json.dumps(
+                doc_data, ensure_ascii=False
+            )
+
+    if n_fetched:
+        _save_doc_cache(cache, cache_path)
+    n_with = gdf["doc_processos"].notna().sum()
+    log.info(
+        "DOC: fetched %d new, %d cached total, %d heliports with DOC data",
+        n_fetched, len(cache), int(n_with),
+    )
+    return gdf
 
 
 def _classify_size(val, min_dim=21):
@@ -432,6 +595,10 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
         rename[col_map["oaci"]] = "anac_oaci"
     if col_map["ciad"]:
         rename[col_map["ciad"]] = "anac_ciad"
+    if col_map.get("tipo"):
+        rename[col_map["tipo"]] = "anac_tipo"
+    if col_map.get("municipio"):
+        rename[col_map["municipio"]] = "anac_municipio"
 
     # Detect operation / status column
     status_col = col_map.get("operacao") or col_map.get("validade")
@@ -533,6 +700,7 @@ def _detect_anac_columns(df: pd.DataFrame) -> dict:
         "ciad": _find("CIAD"),
         "uf": _find("UF"),
         "municipio": _find("MUNIC", "CIDADE"),
+        "tipo": _find("TIPO"),
         "operacao": _find("OPERA"),
         "validade": _find("VALIDADE", "EFETIVA"),
     }
@@ -774,15 +942,37 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         except Exception as exc:
             log.warning("Failed to read local SMUL file: %s", exc)
 
-    # --- Try download ---
+    # --- Try download (auto-detect most recent month) ---
     if df is None:
-        log.info("Downloading SMUL license spreadsheet...")
-        resp = _download_with_retries(SMUL_XLSX_URL, timeout=30)
-        if resp and resp.status_code == 200:
-            try:
-                df = pd.read_excel(io.BytesIO(resp.content))
-            except Exception as exc:
-                log.warning("Failed to parse SMUL XLSX: %s", exc)
+        from datetime import datetime as _dt
+        now = _dt.now()
+        # Try from current month backwards up to 12 months
+        candidates = []
+        for offset in range(12):
+            m = now.month - offset
+            y = now.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            candidates.append((y, m))
+
+        for year, month in candidates:
+            month_name = _MESES_PT[month - 1]
+            url = SMUL_XLSX_BASE.format(month=month_name, year=year)
+            log.info("Trying SMUL spreadsheet: %s-%d ...", month_name, year)
+            resp = _download_with_retries(url, timeout=15, max_retries=1)
+            if resp and resp.status_code == 200 and len(resp.content) > 500:
+                try:
+                    df = pd.read_excel(io.BytesIO(resp.content))
+                    log.info(
+                        "SMUL spreadsheet found: %s-%d (%d records)",
+                        month_name, year, len(df),
+                    )
+                    break
+                except Exception as exc:
+                    log.warning("Failed to parse SMUL %s-%d: %s", month_name, year, exc)
+        if df is None:
+            log.warning("Could not download any SMUL spreadsheet.")
 
     if df is None or df.empty:
         log.warning(
@@ -801,6 +991,7 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         "VALIDADE AUTO": "smul_validade",
         "Nº AUTO LICENÇA": "smul_auto",
         "Processo": "smul_processo",
+        "Publicação": "smul_publicacao_doc",
     }
     df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
@@ -810,6 +1001,11 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         df["smul_vigente"] = df["smul_validade"] >= pd.Timestamp.now()
     else:
         df["smul_vigente"] = True
+
+    if "smul_publicacao_doc" in df.columns:
+        df["smul_publicacao_doc"] = pd.to_datetime(
+            df["smul_publicacao_doc"], errors="coerce"
+        )
 
     # --- Build address key for matching ---
     df["_smul_addr_key"] = df.apply(
@@ -835,6 +1031,8 @@ def merge_smul(
         "smul_validade",
         "smul_vigente",
         "smul_proprietario",
+        "smul_processo",
+        "smul_publicacao_doc",
     ]
     if df_smul.empty:
         for col in smul_cols:
@@ -1017,21 +1215,70 @@ def merge_smul(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_name(name) -> str:
+    """Normalize a heliport name for fuzzy comparison."""
+    if pd.isna(name) or not str(name).strip():
+        return ""
+    import unicodedata
+    s = str(name).upper().strip()
+    # Remove accents
+    s = "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+    # Remove common prefixes/suffixes
+    for prefix in ["HELIPONTO ", "HELIPORTO ", "HELIP. ", "COND. ED. ", "COND. ", "ED. ", "EDIFICIO "]:
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    return s.strip()
+
+
 def spatial_join(
     gdf_geosampa: gpd.GeoDataFrame,
     gdf_anac: gpd.GeoDataFrame,
     buffer_m: int = BUFFER_METROS,
 ) -> gpd.GeoDataFrame:
-    """Cross-reference GeoSampa and ANAC by proximity (nearest within buffer)."""
+    """Cross-reference GeoSampa and ANAC by proximity (nearest within buffer).
+
+    Uses a multi-pass strategy:
+    1. Exact OACI code match (most reliable)
+    2. Spatial proximity (sjoin_nearest within buffer)
+    3. Fuzzy name matching for remaining unmatched records
+    """
 
     # Project to UTM for metre-based distance
     gs = gdf_geosampa.to_crs(CRS_UTM23S).copy()
     gs["_gs_idx"] = range(len(gs))
     anac = gdf_anac.to_crs(CRS_UTM23S).copy()
+    anac["_anac_idx"] = anac.index.copy()
 
-    # --- 1. Match GeoSampa → nearest ANAC ---
+    # --- Pass 0: Exact OACI code match ---
+    # Build OACI lookup from ANAC
+    anac_oaci_map = {}  # OACI -> anac index
+    for idx, row in anac.iterrows():
+        oaci = str(row.get("anac_oaci") or "").strip().upper()
+        if oaci:
+            anac_oaci_map[oaci] = idx
+
+    oaci_matched_gs = set()   # GeoSampa _gs_idx matched via OACI
+    oaci_matched_anac = set()  # ANAC indices matched via OACI
+
+    oaci_pairs = []  # (gs_idx, anac_idx) pairs
+    for gs_idx, gs_row in gs.iterrows():
+        gs_oaci = str(gs_row.get("gs_oaci") or "").strip().upper()
+        if gs_oaci and gs_oaci in anac_oaci_map:
+            anac_idx = anac_oaci_map[gs_oaci]
+            oaci_pairs.append((gs_row["_gs_idx"], anac_idx))
+            oaci_matched_gs.add(gs_row["_gs_idx"])
+            oaci_matched_anac.add(anac_idx)
+
+    log.info("OACI exact match: %d pairs", len(oaci_pairs))
+
+    # --- Pass 1: Spatial proximity for remaining GeoSampa records ---
+    gs_remaining = gs[~gs["_gs_idx"].isin(oaci_matched_gs)]
+
     joined = gpd.sjoin_nearest(
-        gs,
+        gs_remaining,
         anac,
         how="left",
         max_distance=buffer_m,
@@ -1043,8 +1290,83 @@ def spatial_join(
         subset=["_gs_idx"], keep="first"
     )
 
+    # --- Pass 2: Fuzzy name matching for still-unmatched GeoSampa records ---
+    spatial_matched_gs = set(
+        joined.dropna(subset=["dist_metros"])["_gs_idx"].values
+    )
+    spatial_matched_anac = set(
+        joined.dropna(subset=["dist_metros"])["index_right"].dropna().astype(int)
+    )
+    all_matched_anac = oaci_matched_anac | spatial_matched_anac
+
+    unmatched_gs_mask = joined["dist_metros"].isna()
+    if unmatched_gs_mask.any():
+        # Build normalized name index from unmatched ANAC records
+        anac_name_idx = {}
+        for idx, row in anac.iterrows():
+            if idx not in all_matched_anac:
+                norm = _normalize_name(row.get("anac_nome"))
+                if norm:
+                    anac_name_idx[norm] = idx
+
+        name_match_count = 0
+        for joined_idx in joined.index[unmatched_gs_mask]:
+            gs_name = _normalize_name(joined.loc[joined_idx, "gs_nome"])
+            if not gs_name:
+                continue
+            # Try exact normalized name match
+            if gs_name in anac_name_idx:
+                anac_idx = anac_name_idx[gs_name]
+                anac_row = anac.loc[anac_idx]
+                for col in anac.columns:
+                    if col in joined.columns and col not in ("geometry", "_gs_idx"):
+                        joined.loc[joined_idx, col] = anac_row[col]
+                joined.loc[joined_idx, "index_right"] = anac_idx
+                joined.loc[joined_idx, "dist_metros"] = -1  # flag: matched by name
+                all_matched_anac.add(anac_idx)
+                del anac_name_idx[gs_name]
+                name_match_count += 1
+                continue
+            # Try substring match (GeoSampa names are often longer)
+            for anac_name, anac_idx in list(anac_name_idx.items()):
+                if len(anac_name) >= 4 and (anac_name in gs_name or gs_name in anac_name):
+                    anac_row = anac.loc[anac_idx]
+                    for col in anac.columns:
+                        if col in joined.columns and col not in ("geometry", "_gs_idx"):
+                            joined.loc[joined_idx, col] = anac_row[col]
+                    joined.loc[joined_idx, "index_right"] = anac_idx
+                    joined.loc[joined_idx, "dist_metros"] = -2  # flag: matched by substring
+                    all_matched_anac.add(anac_idx)
+                    del anac_name_idx[anac_name]
+                    name_match_count += 1
+                    break
+
+        log.info("Fuzzy name match: %d additional pairs", name_match_count)
+
+    # --- Merge OACI-matched pairs back into joined ---
+    if oaci_pairs:
+        oaci_rows = []
+        for gs_idx_val, anac_idx in oaci_pairs:
+            gs_row = gs[gs["_gs_idx"] == gs_idx_val].iloc[0].copy()
+            anac_row = anac.loc[anac_idx]
+            for col in anac.columns:
+                if col not in ("geometry", "_gs_idx"):
+                    gs_row[col] = anac_row[col]
+            gs_row["index_right"] = anac_idx
+            gs_row["dist_metros"] = 0  # exact OACI match
+            oaci_rows.append(gs_row)
+        oaci_df = gpd.GeoDataFrame(oaci_rows, crs=gs.crs)
+        # Ensure compatible columns
+        for col in joined.columns:
+            if col not in oaci_df.columns:
+                oaci_df[col] = None
+        for col in oaci_df.columns:
+            if col not in joined.columns:
+                joined[col] = None
+        joined = pd.concat([joined, oaci_df[joined.columns]], ignore_index=True)
+
     # --- 2. Identify ANAC records with no GeoSampa match ---
-    matched_anac_idx = set(
+    matched_anac_idx = all_matched_anac | set(
         joined.dropna(subset=["dist_metros"])["index_right"].dropna().astype(int)
     )
     unmatched_anac = anac.loc[~anac.index.isin(matched_anac_idx)].copy()
@@ -1099,6 +1421,7 @@ STATUS_COLORS = {
     "DIVERGENTE_ANAC_INATIVO": "#e67e22",
     "NÃO_CADASTRADO_ANAC": "#e74c3c",
     "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
+    "INDEFERIDO_PREFEITURA": "#8b0000",
     "SEM_LICENÇA_SMUL": "#c0392b",
     "LICENÇA_SMUL_VENCIDA": "#d35400",
 }
@@ -1108,6 +1431,7 @@ IRREGULAR_STATUSES = {
     "DIVERGENTE_ANAC_INATIVO",
     "NÃO_CADASTRADO_ANAC",
     "NÃO_CADASTRADO_PREFEITURA",
+    "INDEFERIDO_PREFEITURA",
     "SEM_LICENÇA_SMUL",
     "LICENÇA_SMUL_VENCIDA",
 }
@@ -1119,6 +1443,7 @@ def _irregular_label(status: str) -> str:
         "DIVERGENTE_ANAC_INATIVO": "IRREGULAR — ANAC inativo",
         "NÃO_CADASTRADO_ANAC": "IRREGULAR — Sem cadastro na ANAC",
         "NÃO_CADASTRADO_PREFEITURA": "IRREGULAR — Sem cadastro na Prefeitura",
+        "INDEFERIDO_PREFEITURA": "IRREGULAR — Indeferido pela Prefeitura",
         "SEM_LICENÇA_SMUL": "IRREGULAR — Sem licença SMUL",
         "LICENÇA_SMUL_VENCIDA": "IRREGULAR — Licença SMUL vencida",
     }
@@ -1183,6 +1508,8 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
     anac_ativo = row.get("anac_ativo", True)
     anac_val = row.get("anac_validade")
     anac_operacao_raw = _fmt(row.get("anac_status_raw"))
+    anac_tipo = _fmt(row.get("anac_tipo"))
+    anac_municipio = _fmt(row.get("anac_municipio"))
     has_anac = anac_nome or _fmt(row.get("anac_oaci"))
     if has_anac:
         p.append("<hr style='margin:4px 0'>")
@@ -1190,6 +1517,12 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
                  "\U0001f6e9 ANAC (Federal)</b><br>")
         if anac_nome:
             p.append(f"<b>Nome ANAC:</b> {anac_nome}<br>")
+        if anac_tipo:
+            tipo_labels = {"PRIV": "Privado", "MIL": "Militar", "PUB": "Público"}
+            tipo_display = tipo_labels.get(anac_tipo.upper(), anac_tipo)
+            p.append(f"<b>Tipo:</b> {tipo_display}<br>")
+        if anac_municipio:
+            p.append(f"<b>Município:</b> {anac_municipio}<br>")
         # Destaque operação noturna (VFR diurno = sem noturno; VFR = dia e noite)
         if anac_operacao_raw:
             oper_upper = str(anac_operacao_raw).upper()
@@ -1299,14 +1632,31 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
             p.append(f"<b>Nome SMUL:</b> {smul_nome_val}<br>")
         if smul_auto:
             p.append(f"<b>Auto licen\u00e7a:</b> {smul_auto}<br>")
+        smul_proc = _fmt(row.get("smul_processo"))
+        if smul_proc:
+            p.append(f"<b>Processo:</b> {smul_proc}<br>")
         if pd.notna(smul_val):
             smul_val_str = _fmt(smul_val, fmt_date=True) or str(smul_val)[:10]
             vig_color = "#2ecc71" if smul_vig else "#e74c3c"
             vig_text = "Vigente" if smul_vig else "Vencida"
+            # Alert if expiring within 12 months
+            if smul_vig and pd.notna(smul_val):
+                months_left = (
+                    pd.Timestamp(smul_val) - pd.Timestamp.now()
+                ).days / 30
+                if months_left <= 12:
+                    vig_color = "#e67e22"
+                    vig_text = f"Vence em {int(months_left)} meses"
             p.append(
                 f"<b>Validade:</b> {smul_val_str} "
                 f"(<span style='color:{vig_color};font-weight:bold'>"
                 f"{vig_text}</span>)<br>"
+            )
+        smul_pub = row.get("smul_publicacao_doc")
+        if pd.notna(smul_pub):
+            pub_str = _fmt(smul_pub, fmt_date=True) or str(smul_pub)[:10]
+            p.append(
+                f"<b>Publicado no DOC:</b> {pub_str}<br>"
             )
         if smul_prop:
             p.append(f"<b>Propriet\u00e1rio:</b> {smul_prop}<br>")
@@ -1314,8 +1664,23 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
         p.append(
             "<b style='color:#e74c3c;font-size:11px'>"
             "\U0001f4cb SMUL:</b> "
-            "<span style='color:#e74c3c'>Sem licen\u00e7a</span><br>"
+            "<span style='color:#e74c3c'>Sem licen\u00e7a de funcionamento</span><br>"
         )
+        # Show CADES parecer info if available (different from SMUL)
+        gs_parecer = _fmt(row.get("cd_parecer_tecnico"))
+        gs_doc_pub = row.get("dt_publicacao_diario_oficial")
+        if gs_parecer:
+            p.append(
+                f"<span style='font-size:11px;color:#7f8c8d'>"
+                f"Parecer CADES (ambiental): {gs_parecer}"
+            )
+            if pd.notna(gs_doc_pub):
+                doc_str = str(gs_doc_pub)[:10].replace("Z", "")
+                doc_dt = pd.to_datetime(doc_str, errors="coerce")
+                if pd.notna(doc_dt):
+                    age_years = (pd.Timestamp.now() - doc_dt).days / 365
+                    p.append(f" ({doc_dt.strftime('%d/%m/%Y')} — {age_years:.0f} anos)")
+            p.append("</span><br>")
 
     # ── SECTION: Localização ──
     p.append("<hr style='margin:4px 0'>")
@@ -1373,6 +1738,69 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
             "<a href='https://aisweb.decea.mil.br/?i=aerodromos' target='_blank' "
             "style='color:#2980b9;text-decoration:underline;font-size:11px'>"
             "AISWEB — buscar pelo nome</a><br>"
+        )
+
+    # ── SECTION: Diário Oficial (DOC) ──
+    doc_raw = row.get("doc_processos")
+    if pd.notna(doc_raw) and doc_raw:
+        try:
+            doc_items = json.loads(doc_raw) if isinstance(doc_raw, str) else doc_raw
+        except (json.JSONDecodeError, TypeError):
+            doc_items = None
+    else:
+        doc_items = None
+
+    p.append("<hr style='margin:4px 0'>")
+    if doc_items and isinstance(doc_items, list) and len(doc_items) > 0:
+        uid = f"doc_{hash(nome) % 99999}"
+        p.append(
+            "<details style='margin:2px 0'>"
+            "<summary style='cursor:pointer;font-size:11px;color:#34495e;"
+            "font-weight:bold'>"
+            f"\U0001f4f0 Diário Oficial ({len(doc_items)} publica\u00e7\u00f5es)"
+            "</summary>"
+            "<div style='margin-top:4px;max-height:200px;overflow-y:auto;"
+            "font-size:11px'>"
+        )
+        for item in doc_items:
+            proc = item.get("processo", "")
+            tipo = item.get("tipo", "")
+            data_pub = item.get("data_pub", "")
+            cat = item.get("categoria", "")
+            # Color code by type
+            if "fiscal" in cat.lower():
+                badge_bg = "#e74c3c"
+                badge_txt = "Fiscal"
+            elif "SISACOE" in cat or "Auto" in cat:
+                badge_bg = "#27ae60"
+                badge_txt = "ALFH"
+            elif "Comunique" in tipo:
+                badge_bg = "#e67e22"
+                badge_txt = "Notificação"
+            elif "Delibera" in tipo or "Despacho deferido" in tipo:
+                badge_bg = "#2980b9"
+                badge_txt = "Deliberação"
+            else:
+                badge_bg = "#7f8c8d"
+                badge_txt = tipo[:15] if tipo else "DOC"
+            p.append(
+                f"<div style='border-bottom:1px solid #eee;padding:3px 0'>"
+                f"<span style='background:{badge_bg};color:white;padding:1px 5px;"
+                f"border-radius:3px;font-size:10px;font-weight:bold'>"
+                f"{badge_txt}</span> "
+            )
+            if data_pub:
+                p.append(f"<b>{data_pub}</b> ")
+            if proc:
+                p.append(f"<span style='color:#7f8c8d'>{proc}</span> ")
+            if cat and "fiscal" not in cat.lower() and "SISACOE" not in cat:
+                p.append(f"<i>{cat[:40]}</i>")
+            p.append("</div>")
+        p.append("</div></details>")
+    else:
+        p.append(
+            "<span style='font-size:11px;color:#95a5a6'>"
+            "\U0001f4f0 DOC: Sem publica\u00e7\u00f5es encontradas</span><br>"
         )
 
     p.append("</div>")
@@ -1562,6 +1990,7 @@ def build_map(
     n_inativo = len(gdf[gdf["status_consolidado"] == "DIVERGENTE_ANAC_INATIVO"])
     n_sem_smul = len(gdf[gdf["status_consolidado"] == "SEM_LICENÇA_SMUL"])
     n_smul_venc = len(gdf[gdf["status_consolidado"] == "LICENÇA_SMUL_VENCIDA"])
+    n_indeferido = len(gdf[gdf["status_consolidado"] == "INDEFERIDO_PREFEITURA"])
 
     # Size stats for legend
     n_size_ok = int((gdf["tamanho_status"] == "OK").sum()) if "tamanho_status" in gdf.columns else 0
@@ -1613,6 +2042,9 @@ def build_map(
         <i style="background:#e67e22;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #e67e22;"></i>
         <b>ANAC inativo</b> ({n_inativo})<br>
+        <i style="background:#8b0000;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #8b0000;"></i>
+        <b>Indeferido</b> pela Prefeitura ({n_indeferido})<br>
       </div>
     </div>
     """
@@ -1685,6 +2117,8 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "anac_nome",
         "anac_oaci",
         "anac_ciad",
+        "anac_tipo",
+        "anac_municipio",
         "anac_validade",
         "anac_status_raw",
         "anac_ativo",
@@ -1692,6 +2126,8 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "smul_nome",
         "smul_proprietario",
         "smul_auto",
+        "smul_processo",
+        "smul_publicacao_doc",
         "smul_validade",
         "smul_vigente",
         "status_consolidado",
@@ -1700,6 +2136,7 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "aisweb_superficie",
         "aisweb_mtow",
         "tamanho_status",
+        "doc_processos",
     ]
     available = [c for c in key_cols if c in gdf.columns]
 
@@ -1710,6 +2147,664 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
 
     export.to_csv(output_path, index=False, encoding="utf-8-sig")
     log.info("CSV exported to %s (%d rows)", output_path, len(export))
+
+
+# ---------------------------------------------------------------------------
+# 7. Report generation
+# ---------------------------------------------------------------------------
+
+
+def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> None:
+    """Generate an HTML dashboard report from the consolidated GeoDataFrame."""
+    from datetime import datetime
+
+    n_total = len(gdf)
+    if n_total == 0:
+        log.warning("No data for report generation.")
+        return
+
+    # --- Status counts ---
+    status_counts = gdf["status_consolidado"].value_counts().to_dict()
+    n_regular = status_counts.get("REGULAR", 0)
+    n_irregular = n_total - n_regular
+    n_sem_smul = status_counts.get("SEM_LICENÇA_SMUL", 0)
+    n_no_pref = status_counts.get("NÃO_CADASTRADO_PREFEITURA", 0)
+    n_no_anac = status_counts.get("NÃO_CADASTRADO_ANAC", 0)
+    n_smul_venc = status_counts.get("LICENÇA_SMUL_VENCIDA", 0)
+    n_inativo = status_counts.get("DIVERGENTE_ANAC_INATIVO", 0)
+    n_indeferido = status_counts.get("INDEFERIDO_PREFEITURA", 0)
+
+    pct = lambda v: f"{v / n_total * 100:.1f}%" if n_total else "0%"
+
+    # --- ANAC stats ---
+    has_anac = gdf["anac_oaci"].notna() if "anac_oaci" in gdf.columns else pd.Series([False] * n_total)
+    n_anac = int(has_anac.sum())
+    n_vfr_noite = 0
+    n_vfr_diurno = 0
+    if "anac_status_raw" in gdf.columns:
+        ops = gdf.loc[has_anac, "anac_status_raw"].fillna("").astype(str).str.upper()
+        n_vfr_diurno = int(ops.str.contains("VFR DIURNA|VFR DIURNO", regex=True).sum())
+        n_vfr_noite = n_anac - n_vfr_diurno
+
+    # ANAC tipo breakdown
+    n_priv = 0
+    n_mil = 0
+    if "anac_tipo" in gdf.columns:
+        tipos = gdf.loc[has_anac, "anac_tipo"].fillna("").astype(str).str.upper()
+        n_priv = int(tipos.str.contains("PRIV").sum())
+        n_mil = int(tipos.str.contains("MIL").sum())
+
+    # ANAC validade range
+    anac_val_min = ""
+    anac_val_max = ""
+    if "anac_validade" in gdf.columns:
+        vals = pd.to_datetime(gdf["anac_validade"], errors="coerce").dropna()
+        if not vals.empty:
+            anac_val_min = vals.min().strftime("%d/%m/%Y")
+            anac_val_max = vals.max().strftime("%d/%m/%Y")
+
+    # --- GeoSampa stats ---
+    has_gs = gdf["gs_nome"].notna() if "gs_nome" in gdf.columns else pd.Series([False] * n_total)
+    n_gs = int(has_gs.sum())
+    n_gs_deferido = 0
+    n_gs_indeferido = 0
+    if "gs_situacao" in gdf.columns:
+        sit = gdf.loc[has_gs, "gs_situacao"].fillna("").astype(str)
+        n_gs_deferido = int(sit.str.contains("Deferido", case=False).sum())
+        n_gs_indeferido = int(sit.str.contains("Indeferido", case=False).sum())
+
+    # Ciclos
+    ciclo_col = "qt_total_ciclo_permitido"
+    total_ciclos = 0
+    media_ciclos = 0.0
+    max_ciclos = 0
+    if ciclo_col in gdf.columns:
+        ciclos = pd.to_numeric(gdf[ciclo_col], errors="coerce").fillna(0)
+        total_ciclos = int(ciclos.sum())
+        media_ciclos = round(ciclos.mean(), 1) if len(ciclos) > 0 else 0
+        max_ciclos = int(ciclos.max())
+
+    # --- SMUL stats ---
+    n_smul = int(gdf["smul_licenciado"].sum()) if "smul_licenciado" in gdf.columns else 0
+    n_smul_vigente = int(gdf["smul_vigente"].sum()) if "smul_vigente" in gdf.columns else 0
+    n_smul_vencida = n_smul - n_smul_vigente
+    smul_val_min = ""
+    smul_val_max = ""
+    smul_with_lic = gdf[gdf.get("smul_licenciado", pd.Series([False])) == True] if "smul_licenciado" in gdf.columns else gdf.iloc[0:0]
+    if "smul_validade" in gdf.columns and n_smul > 0:
+        smul_vals = pd.to_datetime(
+            smul_with_lic["smul_validade"], errors="coerce"
+        ).dropna()
+        if not smul_vals.empty:
+            smul_val_min = smul_vals.min().strftime("%d/%m/%Y")
+            smul_val_max = smul_vals.max().strftime("%d/%m/%Y")
+    n_sem_lic = n_total - n_smul
+
+    # --- SMUL: Recent processes (last 15 by publication date) ---
+    recent_smul_html = ""
+    if "smul_publicacao_doc" in gdf.columns and n_smul > 0:
+        smul_pub = smul_with_lic.copy()
+        smul_pub["_pub_dt"] = pd.to_datetime(smul_pub["smul_publicacao_doc"], errors="coerce")
+        smul_pub = smul_pub.dropna(subset=["_pub_dt"]).sort_values("_pub_dt", ascending=False).head(15)
+        rows = []
+        for _, r in smul_pub.iterrows():
+            nome = r.get("smul_nome") or r.get("gs_nome") or "?"
+            proc = r.get("smul_processo") or "-"
+            pub_dt = r["_pub_dt"].strftime("%d/%m/%Y")
+            val_dt = pd.to_datetime(r.get("smul_validade"), errors="coerce")
+            val_str = val_dt.strftime("%d/%m/%Y") if pd.notna(val_dt) else "-"
+            auto = r.get("smul_auto") or "-"
+            vig = bool(r.get("smul_vigente", False))
+            vig_badge = (
+                '<span class="status-badge badge-regular">Vigente</span>'
+                if vig else
+                '<span class="status-badge badge-irregular">Vencida</span>'
+            )
+            rows.append(
+                f"    <tr><td>{pub_dt}</td><td>{nome}</td><td>{auto}</td>"
+                f"<td>{proc}</td><td>{val_str}</td><td>{vig_badge}</td></tr>"
+            )
+        recent_smul_html = "\n".join(rows)
+
+    # --- SMUL: Expiring alerts ---
+    alert_smul_html = ""
+    if "smul_validade" in gdf.columns and n_smul > 0:
+        now = pd.Timestamp.now()
+        smul_alert = smul_with_lic.copy()
+        smul_alert["_val_dt"] = pd.to_datetime(smul_alert["smul_validade"], errors="coerce")
+        # Already expired
+        expired = smul_alert[smul_alert["_val_dt"] < now].sort_values("_val_dt")
+        # Expiring within 12 months
+        expiring = smul_alert[
+            smul_alert["_val_dt"].between(now, now + pd.DateOffset(months=12))
+        ].sort_values("_val_dt")
+        alert_rows = []
+        for _, r in expired.iterrows():
+            nome = r.get("smul_nome") or "?"
+            val_str = r["_val_dt"].strftime("%d/%m/%Y") if pd.notna(r["_val_dt"]) else "?"
+            days_ago = (now - r["_val_dt"]).days
+            alert_rows.append(
+                f'    <tr style="background:#ffeaea"><td>{nome}</td>'
+                f"<td>{val_str}</td>"
+                f'<td><span class="status-badge badge-irregular">Vencida há {days_ago} dias</span></td>'
+                f"<td>{r.get('smul_processo', '-')}</td></tr>"
+            )
+        for _, r in expiring.iterrows():
+            nome = r.get("smul_nome") or "?"
+            val_str = r["_val_dt"].strftime("%d/%m/%Y") if pd.notna(r["_val_dt"]) else "?"
+            days_left = (r["_val_dt"] - now).days
+            months_left = days_left // 30
+            alert_rows.append(
+                f'    <tr style="background:#fff8e1"><td>{nome}</td>'
+                f"<td>{val_str}</td>"
+                f'<td><span class="status-badge badge-warn">Vence em {months_left} meses</span></td>'
+                f"<td>{r.get('smul_processo', '-')}</td></tr>"
+            )
+        alert_smul_html = "\n".join(alert_rows)
+        n_alerts = len(expired) + len(expiring)
+
+    # --- Divergências GeoSampa vs SMUL ---
+    # GeoSampa deferidos sem SMUL — classified by CADES parecer age
+    gs_def_no_smul_html = ""
+    gs_recentes_html = ""
+    n_gs_def_no_smul = 0
+    n_gs_cades_recente = 0
+    n_gs_cades_antigo = 0
+    if "gs_situacao" in gdf.columns:
+        gs_def_no_smul = gdf[
+            (gdf["gs_situacao"].fillna("").str.contains("Deferido", case=False)) &
+            (gdf.get("smul_licenciado", pd.Series([False] * n_total)) != True)
+        ]
+        n_gs_def_no_smul = len(gs_def_no_smul)
+
+        # Classify by CADES parecer date (Auto SMUL valid for 5 years)
+        now_ts = pd.Timestamp.now()
+        recentes = []
+        antigos = []
+        for _, r in gs_def_no_smul.iterrows():
+            doc_raw = str(r.get("dt_publicacao_diario_oficial") or "").replace("Z", "")
+            doc_dt = pd.to_datetime(doc_raw, errors="coerce")
+            age_days = (now_ts - doc_dt).days if pd.notna(doc_dt) else 9999
+            entry = (r, doc_dt, age_days)
+            if age_days <= 5 * 365:
+                recentes.append(entry)
+            else:
+                antigos.append(entry)
+
+        n_gs_cades_recente = len(recentes)
+        n_gs_cades_antigo = len(antigos)
+
+        # Table for recent ones (potential valid auto)
+        recentes.sort(key=lambda x: x[1] if pd.notna(x[1]) else pd.Timestamp.min, reverse=True)
+        rows = []
+        for r, doc_dt, age_days in recentes:
+            nome = r.get("gs_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            doc_str = doc_dt.strftime("%d/%m/%Y") if pd.notna(doc_dt) else "-"
+            parecer = r.get("cd_parecer_tecnico") or "-"
+            meses = age_days // 30
+            doc_link = r.get("tx_link_diario_oficial") or ""
+            doc_cell = (
+                f"<a href='{doc_link}' target='_blank'>{doc_str}</a>"
+                if doc_link else doc_str
+            )
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td>"
+                f"<td>{doc_cell}</td><td>{parecer}</td>"
+                f"<td>{meses} meses</td></tr>"
+            )
+        gs_recentes_html = "\n".join(rows)
+
+        # Table for old ones (likely expired)
+        antigos.sort(key=lambda x: x[1] if pd.notna(x[1]) else pd.Timestamp.min, reverse=True)
+        rows = []
+        for r, doc_dt, age_days in antigos[:20]:
+            nome = r.get("gs_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            doc_str = doc_dt.strftime("%d/%m/%Y") if pd.notna(doc_dt) else "-"
+            anos = age_days // 365
+            endereco = r.get("gs_endereco") or "-"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td>"
+                f"<td>{doc_str}</td><td>{anos} anos</td>"
+                f"<td>{endereco}</td></tr>"
+            )
+        gs_def_no_smul_html = "\n".join(rows)
+
+    # SMUL sem correspondência no GeoSampa
+    smul_no_gs_html = ""
+    n_smul_no_gs = 0
+    if n_smul > 0:
+        smul_no_gs = smul_with_lic[smul_with_lic["gs_nome"].isna()] if "gs_nome" in gdf.columns else smul_with_lic
+        n_smul_no_gs = len(smul_no_gs)
+        rows = []
+        for _, r in smul_no_gs.head(20).iterrows():
+            nome = r.get("smul_nome") or "?"
+            auto = r.get("smul_auto") or "-"
+            proc = r.get("smul_processo") or "-"
+            vig = bool(r.get("smul_vigente", False))
+            vig_txt = "Vigente" if vig else "Vencida"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{auto}</td><td>{proc}</td><td>{vig_txt}</td></tr>"
+            )
+        smul_no_gs_html = "\n".join(rows)
+
+    # --- DOC (Diário Oficial) stats ---
+    doc_heliports_html = ""
+    n_doc_total = 0
+    n_doc_smul = 0
+    n_doc_fiscal = 0
+    if "doc_processos" in gdf.columns:
+        doc_rows_list = []
+        for _, r in gdf.iterrows():
+            raw = r.get("doc_processos")
+            if pd.isna(raw) or not raw:
+                continue
+            try:
+                items = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not items:
+                continue
+            nome = r.get("gs_nome") or r.get("anac_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            st = r.get("status_consolidado", "")
+            badge_cls = "badge-regular" if st == "REGULAR" else (
+                "badge-warn" if "VENCIDA" in st or "INATIVO" in st else "badge-irregular"
+            )
+            n_items = len(items)
+            # Classify items
+            smul_procs = [i for i in items if i.get("processo", "").startswith("6068")]
+            fiscal = [i for i in items if "fiscal" in i.get("categoria", "").lower()]
+            latest = items[0].get("data_pub", "-") if items else "-"
+            tipos = ", ".join(sorted(set(i.get("tipo", "")[:15] for i in items if i.get("tipo"))))[:40]
+            procs_str = ", ".join(sorted(set(i.get("processo", "") for i in items[:3] if i.get("processo"))))
+
+            n_doc_total += 1
+            if smul_procs:
+                n_doc_smul += 1
+            if fiscal:
+                n_doc_fiscal += 1
+
+            doc_rows_list.append({
+                "nome": nome,
+                "oaci": oaci,
+                "n_items": n_items,
+                "n_smul": len(smul_procs),
+                "n_fiscal": len(fiscal),
+                "latest": latest,
+                "tipos": tipos,
+                "procs": procs_str,
+                "status": st,
+                "badge_cls": badge_cls,
+            })
+
+        # Sort by most publications
+        doc_rows_list.sort(key=lambda x: -x["n_items"])
+        rows = []
+        for d in doc_rows_list[:30]:
+            smul_mark = (
+                '<span style="color:#e74c3c;font-weight:bold">Sim</span>'
+                if d["n_smul"] > 0 else '<span style="color:#95a5a6">Não</span>'
+            )
+            fiscal_mark = (
+                f'<span style="color:#e74c3c;font-weight:bold">{d["n_fiscal"]}</span>'
+                if d["n_fiscal"] > 0 else '<span style="color:#95a5a6">0</span>'
+            )
+            rows.append(
+                f'    <tr><td>{d["nome"][:40]}</td><td>{d["oaci"]}</td>'
+                f'<td><b>{d["n_items"]}</b></td><td>{d["latest"]}</td>'
+                f'<td>{smul_mark}</td><td>{fiscal_mark}</td>'
+                f'<td style="font-size:11px">{d["procs"][:40]}</td>'
+                f'<td><span class="status-badge {d["badge_cls"]}">{d["status"][:20]}</span></td></tr>'
+            )
+        doc_heliports_html = "\n".join(rows)
+
+    # --- Spatial match stats ---
+    dist = gdf["dist_metros"] if "dist_metros" in gdf.columns else pd.Series(dtype=float)
+    dist_valid = dist[dist > 0].dropna()
+    n_matches = len(dist_valid)
+    dist_mean = f"{dist_valid.mean():.1f}m" if n_matches > 0 else "-"
+    dist_median = f"{dist_valid.median():.1f}m" if n_matches > 0 else "-"
+    n_exact = int((dist_valid < 5).sum())
+    n_close = int(((dist_valid >= 5) & (dist_valid <= 50)).sum())
+    n_far = int(((dist_valid > 50) & (dist_valid <= 200)).sum())
+    n_oaci_match = int((dist == 0).sum()) if "dist_metros" in gdf.columns else 0
+    n_name_match = int((dist < 0).sum()) if "dist_metros" in gdf.columns else 0
+
+    # --- Top 10 distritos ---
+    dist_col = "nm_distrito_municipal"
+    top_distritos_html = ""
+    if dist_col in gdf.columns:
+        dist_counts = gdf[dist_col].dropna().value_counts().head(10)
+        n_outros = n_total - dist_counts.sum()
+        rows = []
+        for distrito, count in dist_counts.items():
+            rows.append(f"    <tr><td>{distrito}</td><td>{count}</td><td>{pct(count)}</td></tr>")
+        rows.append(
+            f'    <tr style="font-weight:bold"><td>Demais distritos</td>'
+            f"<td>{n_outros}</td><td>{pct(n_outros)}</td></tr>"
+        )
+        top_distritos_html = "\n".join(rows)
+
+    # --- Top 10 helipontos por ciclos ---
+    top_ciclos_html = ""
+    if ciclo_col in gdf.columns:
+        gdf_sorted = gdf.nlargest(10, ciclo_col)
+        rows = []
+        for _, r in gdf_sorted.iterrows():
+            nome = r.get("gs_nome") or r.get("anac_nome") or "Sem nome"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci) or not str(oaci).strip():
+                oaci = "-"
+            ciclo = int(r.get(ciclo_col, 0) or 0)
+            distrito = r.get("nm_distrito_municipal") or "-"
+            st = r.get("status_consolidado", "")
+            badge_class = "badge-regular" if st == "REGULAR" else (
+                "badge-warn" if "VENCIDA" in st or "INATIVO" in st else "badge-irregular"
+            )
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td><td><b>{ciclo}</b></td>"
+                f"<td>{distrito}</td>"
+                f"<td><span class='status-badge {badge_class}'>{st}</span></td></tr>"
+            )
+        top_ciclos_html = "\n".join(rows)
+
+    # --- Status bar segments ---
+    def _bar_seg(n, color, title):
+        w = n / n_total * 100 if n_total else 0
+        if w < 0.5 and n > 0:
+            w = 0.5
+        label = str(n) if w >= 3 else ""
+        return f'    <div style="width:{w:.1f}%;background:{color}" title="{title}">{label}</div>'
+
+    bar_segments = "\n".join([
+        _bar_seg(n_regular, "#27ae60", "Regular"),
+        _bar_seg(n_sem_smul, "#c0392b", "Sem Licença SMUL"),
+        _bar_seg(n_no_pref, "#9b59b6", "Não cadastrado Prefeitura"),
+        _bar_seg(n_no_anac, "#e74c3c", "Não cadastrado ANAC"),
+        _bar_seg(n_indeferido, "#8b0000", "Indeferido Prefeitura"),
+        _bar_seg(n_smul_venc, "#d35400", "SMUL Vencida"),
+        _bar_seg(n_inativo, "#e67e22", "ANAC Inativo"),
+    ])
+
+    # --- Status table rows ---
+    status_table_data = [
+        ("badge-regular", "REGULAR", n_regular, "Cadastro ativo na ANAC + licença SMUL vigente"),
+        ("badge-irregular", "SEM_LICENÇA_SMUL", n_sem_smul, "Ativo na ANAC e GeoSampa, mas sem licença municipal da SMUL"),
+        ("badge-irregular", "NÃO_CADASTRADO_PREFEITURA", n_no_pref, "Registrado na ANAC, mas sem cadastro no GeoSampa/Prefeitura"),
+        ("badge-irregular", "NÃO_CADASTRADO_ANAC", n_no_anac, "Cadastrado no GeoSampa, mas sem registro na ANAC federal"),
+        ("badge-irregular", "INDEFERIDO_PREFEITURA", n_indeferido, "Processo indeferido pela Prefeitura (GeoSampa)"),
+        ("badge-warn", "LICENÇA_SMUL_VENCIDA", n_smul_venc, "Possui licença SMUL, porém vencida"),
+        ("badge-warn", "DIVERGENTE_ANAC_INATIVO", n_inativo, "Registrado na ANAC como inativo/cancelado"),
+    ]
+    status_rows = "\n".join(
+        f'    <tr><td><span class="status-badge {badge}">{label}</span></td>'
+        f"<td>{count}</td><td>{pct(count)}</td><td>{desc}</td></tr>"
+        for badge, label, count, desc in status_table_data
+    )
+
+    today = datetime.now().strftime("%d/%m/%Y")
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório de Helipontos — São Paulo</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; color: #2c3e50; line-height: 1.6; }}
+  .container {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
+  h1 {{ font-size: 28px; color: #1a252f; margin-bottom: 5px; }}
+  h2 {{ font-size: 20px; color: #2980b9; margin: 30px 0 15px; border-bottom: 2px solid #2980b9; padding-bottom: 5px; }}
+  h3 {{ font-size: 16px; color: #34495e; margin: 15px 0 8px; }}
+  .subtitle {{ color: #7f8c8d; font-size: 14px; margin-bottom: 25px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 15px 0; }}
+  .card {{ background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }}
+  .card .number {{ font-size: 36px; font-weight: bold; }}
+  .card .label {{ font-size: 13px; color: #7f8c8d; margin-top: 4px; }}
+  .green {{ color: #27ae60; }}
+  .red {{ color: #e74c3c; }}
+  .orange {{ color: #e67e22; }}
+  .blue {{ color: #2980b9; }}
+  .purple {{ color: #8e44ad; }}
+  .darkred {{ color: #8b0000; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 10px 0; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+  th {{ background: #2c3e50; color: white; padding: 10px 12px; text-align: left; font-size: 13px; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #ecf0f1; font-size: 13px; }}
+  tr:hover td {{ background: #f8f9fa; }}
+  .status-badge {{ display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; color: white; }}
+  .badge-regular {{ background: #27ae60; }}
+  .badge-irregular {{ background: #e74c3c; }}
+  .badge-warn {{ background: #e67e22; }}
+  .section {{ background: white; border-radius: 10px; padding: 20px 25px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+  .bar {{ height: 24px; border-radius: 12px; display: flex; overflow: hidden; margin: 10px 0; }}
+  .bar div {{ height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; }}
+  .footer {{ text-align: center; color: #95a5a6; font-size: 12px; margin-top: 40px; padding: 20px; }}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Relatório de Helipontos de São Paulo</h1>
+<p class="subtitle">Cruzamento de dados: ANAC (Federal) &times; GeoSampa (Prefeitura) &times; SMUL (Licença Municipal) &mdash; Gerado em {today}</p>
+
+<div class="grid">
+  <div class="card"><div class="number blue">{n_total}</div><div class="label">Total de Helipontos</div></div>
+  <div class="card"><div class="number green">{n_regular}</div><div class="label">Regulares ({pct(n_regular)})</div></div>
+  <div class="card"><div class="number red">{n_irregular}</div><div class="label">Irregulares ({pct(n_irregular)})</div></div>
+  <div class="card"><div class="number orange">{total_ciclos}</div><div class="label">Ciclos/dia autorizados</div></div>
+</div>
+
+<h2>1. Visão Geral — Status Consolidado</h2>
+<div class="section">
+  <p>A análise cruzou <b>{n_anac}</b> registros da ANAC, <b>{n_gs}</b> do GeoSampa e <b>{n_smul}</b> licenças SMUL, totalizando <b>{n_total}</b> helipontos únicos.</p>
+  <div class="bar">
+{bar_segments}
+  </div>
+  <table>
+    <tr><th>Status</th><th>Qtd</th><th>%</th><th>Descrição</th></tr>
+{status_rows}
+  </table>
+</div>
+
+<h2>2. Dados ANAC (Federal)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_anac}</div><div class="label">Registrados na ANAC</div></div>
+    <div class="card"><div class="number green">{n_vfr_noite}</div><div class="label">Operação dia e noite</div></div>
+    <div class="card"><div class="number orange">{n_vfr_diurno}</div><div class="label">Apenas diurno</div></div>
+  </div>
+  <h3>Tipo de Uso</h3>
+  <p><b>{n_priv}</b> helipontos privados (PRIV) e <b>{n_mil}</b> militares (MIL).</p>
+  <h3>Operação Noturna</h3>
+  <p><b>{n_vfr_noite} helipontos</b> permitem operação dia e noite (VFR). <b>{n_vfr_diurno} helipontos</b> têm operação restrita ao período diurno (VFR Diurna) — não aceitam pousos noturnos.</p>
+  <h3>Validade do Registro</h3>
+  <p>Registro mais antigo: <b>{anac_val_min}</b> &mdash;
+     Registro mais recente: <b>{anac_val_max}</b></p>
+  <p style="color:#7f8c8d;font-size:12px">Nota: Muitos registros com data 19/07/2018 correspondem à carga inicial do sistema de dados abertos da ANAC.</p>
+</div>
+
+<h2>3. Dados GeoSampa (Prefeitura)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_gs}</div><div class="label">Cadastrados no GeoSampa</div></div>
+    <div class="card"><div class="number green">{n_gs_deferido}</div><div class="label">Deferidos</div></div>
+    <div class="card"><div class="number darkred">{n_gs_indeferido}</div><div class="label">Indeferidos</div></div>
+  </div>
+  <p style="color:#8b0000;font-weight:bold;margin-top:10px">Os {n_gs_indeferido} helipontos indeferidos são classificados como irregulares (INDEFERIDO_PREFEITURA).</p>
+  <h3>Ciclos de Voo Permitidos</h3>
+  <p>Os ciclos representam o número máximo de pousos+decolagens diários autorizados pela Prefeitura.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Helipontos com info de ciclos</td><td>{n_gs}</td></tr>
+    <tr><td>Total de ciclos/dia autorizados</td><td><b>{total_ciclos}</b></td></tr>
+    <tr><td>Média de ciclos/dia por heliponto</td><td>{media_ciclos}</td></tr>
+    <tr><td>Máximo ciclos/dia (1 heliponto)</td><td>{max_ciclos}</td></tr>
+  </table>
+
+  <h3>Top 10 Helipontos por Ciclos Permitidos</h3>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Ciclos/dia</th><th>Distrito</th><th>Status</th></tr>
+{top_ciclos_html}
+  </table>
+</div>
+
+<h2>4. Dados SMUL (Licença de Funcionamento)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number purple">{n_smul}</div><div class="label">Com Licença SMUL</div></div>
+    <div class="card"><div class="number green">{n_smul_vigente}</div><div class="label">Vigentes</div></div>
+    <div class="card"><div class="number red">{n_smul_vencida}</div><div class="label">Vencidas</div></div>
+  </div>
+  <p>A SMUL (Secretaria Municipal de Urbanismo e Licenciamento) emite autos de licença de funcionamento conforme Decreto nº 58.094/2018. Cada auto é publicado no <b>Diário Oficial da Cidade de São Paulo (DOC)</b>.</p>
+  <p>Validade mais próxima a vencer: <b>{smul_val_min}</b> &mdash; Validade mais distante: <b>{smul_val_max}</b></p>
+  <p style="color:#e74c3c;font-weight:bold">{n_sem_lic} helipontos ({pct(n_sem_lic)}) não possuem licença SMUL registrada.</p>
+
+  <h3>Processos Mais Recentes (publicados no DOC)</h3>
+  <p style="font-size:12px;color:#7f8c8d">Autos de licença de funcionamento publicados no Diário Oficial da Cidade de São Paulo, ordenados por data de publicação.</p>
+  <table>
+    <tr><th>Publicação DOC</th><th>Heliponto</th><th>Nº Auto</th><th>Processo</th><th>Validade</th><th>Situação</th></tr>
+{recent_smul_html}
+  </table>
+
+  <h3>Alertas de Vencimento</h3>
+  <p>Licenças vencidas ou com vencimento nos próximos 12 meses.</p>
+  <table>
+    <tr><th>Heliponto</th><th>Validade</th><th>Situação</th><th>Processo</th></tr>
+{alert_smul_html}
+  </table>
+</div>
+
+<h2>5. Divergências GeoSampa vs SMUL</h2>
+<div class="section">
+  <p>Cruzamento entre a base GeoSampa (cadastro de helipontos da Prefeitura) e a planilha SMUL (autos de licença de funcionamento). Total de <b>{n_gs_def_no_smul}</b> helipontos deferidos sem licença SMUL.</p>
+
+  <div style="background:#eef6ff;border-left:4px solid #2980b9;padding:12px 16px;margin:12px 0;border-radius:4px">
+    <b>CADES vs SMUL — processos distintos</b><br>
+    <span style="font-size:12px">
+      O <b>parecer CADES</b> (proc. 6027.xxxx) é a aprovação <b>ambiental</b> publicada no DOC.<br>
+      O <b>auto de licença SMUL</b> (proc. 6068.xxxx) é a <b>licença de funcionamento</b>, também publicada no DOC.<br>
+      São processos independentes — ter parecer CADES deferido <b>não significa</b> ter licença SMUL vigente.<br>
+      Conforme Decreto 58.094/2018, art. 9º §2º, o auto SMUL é válido por <b>5 anos</b> e deve ser revalidado.
+    </span>
+  </div>
+
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><div class="number orange">{n_gs_cades_recente}</div><div class="label">Parecer CADES recente (&le;5 anos)</div></div>
+    <div class="card"><div class="number red">{n_gs_cades_antigo}</div><div class="label">Parecer CADES antigo (&gt;5 anos)</div></div>
+  </div>
+
+  <h3>Parecer CADES recente — podem ter auto SMUL pendente ({n_gs_cades_recente})</h3>
+  <p style="color:#e67e22">Helipontos com parecer ambiental CADES publicado no DOC nos últimos 5 anos, mas sem auto de licença SMUL na planilha. Podem estar em processo de obtenção da licença ou terem auto não registrado na planilha.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Publicação DOC</th><th>Parecer CADES</th><th>Idade</th></tr>
+{gs_recentes_html}
+  </table>
+
+  <h3>Parecer CADES antigo — provavelmente sem licença válida ({n_gs_cades_antigo})</h3>
+  <p style="color:#e74c3c">Helipontos com parecer ambiental CADES há mais de 5 anos e sem auto SMUL. Conforme Decreto 58.094/2018, autos anteriores devem ser renovados na revalidação — estes provavelmente operam sem licença de funcionamento vigente.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Publicação DOC</th><th>Idade</th><th>Endereço</th></tr>
+{gs_def_no_smul_html}
+  </table>
+  <p style="font-size:11px;color:#7f8c8d">Exibindo até 20 dos {n_gs_cades_antigo} registros.</p>
+
+  <h3>Licença SMUL sem Cadastro no GeoSampa ({n_smul_no_gs})</h3>
+  <p style="color:#e67e22">Helipontos com auto de licença SMUL emitido e publicado no DOC, mas sem correspondência na base GeoSampa — possível divergência cadastral.</p>
+  <table>
+    <tr><th>Nome SMUL</th><th>Nº Auto</th><th>Processo</th><th>Situação</th></tr>
+{smul_no_gs_html}
+  </table>
+</div>
+
+<h2>6. Diário Oficial — Publicações por Heliponto</h2>
+<div class="section">
+  <p>Busca automatizada no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) por nome de cada heliponto. Inclui processos SMUL/CONTRU (licença), CADES/SVMA (ambiental) e ações fiscais.</p>
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_doc_total}</div><div class="label">Helipontos com publicações DOC</div></div>
+    <div class="card"><div class="number orange">{n_doc_smul}</div><div class="label">Com processo SMUL (6068)</div></div>
+    <div class="card"><div class="number red">{n_doc_fiscal}</div><div class="label">Com ação fiscal</div></div>
+  </div>
+
+  <h3>Publicações por Heliponto</h3>
+  <p>Helipontos com mais publicações no DOC (pós-março/2023). A coluna "SMUL?" indica se há processos 6068.xxxx (licença de funcionamento).</p>
+  <table>
+    <tr><th>Heliponto</th><th>OACI</th><th>Pub.</th><th>Última</th><th>SMUL?</th><th>Fiscal</th><th>Processos</th><th>Status</th></tr>
+{doc_heliports_html}
+  </table>
+  <p style="font-size:11px;color:#7f8c8d">Exibindo até 30 helipontos. Cada popup do mapa contém a seção "Diário Oficial" com o histórico de publicações do heliponto.</p>
+
+  <div style="background:#fff3e0;border-left:4px solid #e67e22;padding:12px 16px;margin:12px 0;border-radius:4px">
+    <b>Nota:</b> A maioria das publicações são <b>"Comunique-se"</b> (notificações de ALFH) e <b>"Despacho Documental"</b> referentes a ações fiscais. Helipontos com processos SMUL ativos no DOC mas sem auto na planilha SMUL provavelmente estão em processo de regularização ou fiscalização.
+  </div>
+  <p style="font-size:11px;color:#7f8c8d">Fonte: busca automatizada no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023.</p>
+</div>
+
+<h2>7. Distribuição Geográfica (Top 10 Distritos)</h2>
+<div class="section">
+  <table>
+    <tr><th>Distrito</th><th>Helipontos</th><th>% do Total</th></tr>
+{top_distritos_html}
+  </table>
+  <p style="color:#7f8c8d;font-size:12px;margin-top:8px">Nota: Helipontos cadastrados apenas na ANAC (sem GeoSampa) não possuem distrito informado.</p>
+</div>
+
+<h2>8. Qualidade do Cruzamento de Dados</h2>
+<div class="section">
+  <p>O cruzamento GeoSampa &times; ANAC utiliza uma estratégia multi-passe: (1) código OACI exato, (2) proximidade espacial (raio de 100m), (3) correspondência por nome.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Matches por código OACI (exato)</td><td>{n_oaci_match}</td></tr>
+    <tr><td>Matches por proximidade espacial</td><td>{n_matches}</td></tr>
+    <tr><td>Matches por nome (fuzzy)</td><td>{n_name_match}</td></tr>
+    <tr><td>Distância média (spatial)</td><td>{dist_mean}</td></tr>
+    <tr><td>Distância mediana (spatial)</td><td>{dist_median}</td></tr>
+    <tr><td>Matches exatos (&lt;5m)</td><td>{n_exact}</td></tr>
+    <tr><td>Matches próximos (5-50m)</td><td>{n_close}</td></tr>
+    <tr><td>Matches distantes (50-100m)</td><td>{n_far}</td></tr>
+  </table>
+</div>
+
+<h2>9. Conclusões e Achados Principais</h2>
+<div class="section">
+  <ol style="padding-left:20px">
+    <li style="margin-bottom:10px"><b>Apenas {pct(n_regular)} dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros {pct(n_irregular)} apresentam alguma irregularidade.</li>
+    <li style="margin-bottom:10px"><b>{n_sem_smul} helipontos operam sem licença municipal (SMUL)</b>, mesmo tendo cadastro ativo na ANAC e no GeoSampa. Esta é a maior categoria de irregularidade.</li>
+    <li style="margin-bottom:10px"><b>{n_no_pref} helipontos registrados na ANAC não constam no GeoSampa</b> da Prefeitura, indicando possível falta de cadastro municipal ou base desatualizada.</li>
+    <li style="margin-bottom:10px"><b>{n_no_anac} helipontos do GeoSampa não possuem registro na ANAC</b>, sugerindo operações sem autorização federal ou registros desatualizados.</li>
+    <li style="margin-bottom:10px"><b>{n_indeferido} helipontos foram indeferidos pela Prefeitura</b> (processo negado no GeoSampa), indicando que não possuem autorização municipal.</li>
+    <li style="margin-bottom:10px"><b>{n_priv} helipontos são privados</b> e <b>{n_mil} são militares</b>.</li>
+    <li style="margin-bottom:10px"><b>{total_ciclos} ciclos/dia estão autorizados</b> no total, com média de {media_ciclos} por heliponto.</li>
+    <li style="margin-bottom:10px"><b>{n_vfr_diurno} helipontos operam apenas de dia</b> (VFR Diurna) — não aceitam pousos noturnos.</li>
+    <li style="margin-bottom:10px"><b>{n_gs_def_no_smul} helipontos deferidos no GeoSampa não possuem licença SMUL</b>: {n_gs_cades_recente} com parecer CADES recente (possível auto pendente) e {n_gs_cades_antigo} com parecer antigo (provavelmente sem licença válida).</li>
+    <li style="margin-bottom:10px"><b>{n_smul_no_gs} licenças SMUL não têm correspondência no GeoSampa</b>, sugerindo divergência entre as bases da Prefeitura.</li>
+    <li style="margin-bottom:10px"><b>CADES (ambiental) e SMUL (licença de funcionamento) são processos distintos</b>, ambos publicados no Diário Oficial da Cidade de São Paulo. Ter parecer CADES deferido não garante licença SMUL vigente.</li>
+    <li style="margin-bottom:10px"><b>A CONTRU está fiscalizando ativamente</b>: 94 processos no DOC desde 2023 mencionam ação fiscal por operação sem licença de funcionamento de heliponto vigente.</li>
+    <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
+  </ol>
+</div>
+
+<div class="footer">
+  <p>Relatório gerado automaticamente em {today} &mdash; Fontes: ANAC (dados abertos), GeoSampa (WFS), SMUL (autos de licença)</p>
+  <p>Arquivos complementares: <code>mapa_helipontos_sp.html</code> (mapa interativo) | <code>comparativo_helipontos_sp.csv</code> (dados tabulares)</p>
+  <p><a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB — Aeródromos</a> (dimensões e peso máximo por heliponto)</p>
+</div>
+
+</div>
+</body>
+</html>"""
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    log.info("Report generated: %s", output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1767,6 +2862,11 @@ def main():
         "--no-fetch-aisweb",
         action="store_true",
         help="Skip fetching dimensions/MTOW from AISWEB (use cache only).",
+    )
+    parser.add_argument(
+        "--no-fetch-doc",
+        action="store_true",
+        help="Skip fetching DOC publications (use cache only).",
     )
     parser.add_argument(
         "--min-size",
@@ -1835,6 +2935,14 @@ def main():
         has_smul = bool(row.get("smul_licenciado", False))
         smul_vigente = bool(row.get("smul_vigente", False))
 
+        # Check if GeoSampa process was denied (Indeferido)
+        gs_situacao = str(row.get("gs_situacao") or "").strip()
+        gs_indeferido = "indeferido" in gs_situacao.lower()
+
+        # GeoSampa indeferido is a serious irregularity
+        if gs_indeferido:
+            return "INDEFERIDO_PREFEITURA"
+
         # ANAC status checks (federal)
         if not has_anac_match and not is_anac_only:
             return "NÃO_CADASTRADO_ANAC"
@@ -1864,6 +2972,12 @@ def main():
         fetch_missing=not args.no_fetch_aisweb,
     )
 
+    # Step 6b2: Enrich with DOC (Diário Oficial)
+    gdf_result = enrich_with_doc(
+        gdf_result,
+        fetch_missing=not args.no_fetch_doc,
+    )
+
     # Step 6c: Filter by minimum helipad size
     min_sz = args.min_size
     gdf_result["tamanho_status"] = gdf_result["aisweb_dimensoes"].apply(
@@ -1879,11 +2993,13 @@ def main():
     # Step 7: Outputs
     build_map(gdf_result, output_path=args.output_map)
     export_csv(gdf_result, output_path=args.output_csv)
+    generate_report(gdf_result, output_path=OUTPUT_REPORT)
 
     log.info("=" * 60)
     log.info("Done! Files generated:")
     log.info("  CSV: %s", args.output_csv)
     log.info("  Map: %s", args.output_map)
+    log.info("  Report: %s", OUTPUT_REPORT)
     log.info("=" * 60)
 
 
