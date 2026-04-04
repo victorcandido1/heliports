@@ -88,10 +88,14 @@ GEOSAMPA_LAYER_NAMES = [
 ]
 
 # SMUL — Planilha de Autos de Licença de Funcionamento emitidos pela Prefeitura.
-SMUL_XLSX_URL = (
+SMUL_XLSX_BASE = (
     "https://prefeitura.sp.gov.br/documents/d/licenciamento/"
-    "auto_de_licenca_de_helipontos_emitidos_por_smul_fev-2026-xlsx"
+    "auto_de_licenca_de_helipontos_emitidos_por_smul_{month}-{year}-xlsx"
 )
+_MESES_PT = [
+    "jan", "fev", "mar", "abr", "mai", "jun",
+    "jul", "ago", "set", "out", "nov", "dez",
+]
 
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
@@ -183,9 +187,11 @@ def dms_to_decimal(raw: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _download_with_retries(url: str, timeout: int = 30) -> requests.Response | None:
+def _download_with_retries(
+    url: str, timeout: int = 30, max_retries: int = 3
+) -> requests.Response | None:
     """Try downloading *url* with simple retry logic."""
-    for attempt in range(3):
+    for attempt in range(max_retries):
         try:
             resp = requests.get(url, timeout=timeout, allow_redirects=True)
             if resp.status_code == 200:
@@ -787,15 +793,37 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         except Exception as exc:
             log.warning("Failed to read local SMUL file: %s", exc)
 
-    # --- Try download ---
+    # --- Try download (auto-detect most recent month) ---
     if df is None:
-        log.info("Downloading SMUL license spreadsheet...")
-        resp = _download_with_retries(SMUL_XLSX_URL, timeout=30)
-        if resp and resp.status_code == 200:
-            try:
-                df = pd.read_excel(io.BytesIO(resp.content))
-            except Exception as exc:
-                log.warning("Failed to parse SMUL XLSX: %s", exc)
+        from datetime import datetime as _dt
+        now = _dt.now()
+        # Try from current month backwards up to 12 months
+        candidates = []
+        for offset in range(12):
+            m = now.month - offset
+            y = now.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            candidates.append((y, m))
+
+        for year, month in candidates:
+            month_name = _MESES_PT[month - 1]
+            url = SMUL_XLSX_BASE.format(month=month_name, year=year)
+            log.info("Trying SMUL spreadsheet: %s-%d ...", month_name, year)
+            resp = _download_with_retries(url, timeout=15, max_retries=1)
+            if resp and resp.status_code == 200 and len(resp.content) > 500:
+                try:
+                    df = pd.read_excel(io.BytesIO(resp.content))
+                    log.info(
+                        "SMUL spreadsheet found: %s-%d (%d records)",
+                        month_name, year, len(df),
+                    )
+                    break
+                except Exception as exc:
+                    log.warning("Failed to parse SMUL %s-%d: %s", month_name, year, exc)
+        if df is None:
+            log.warning("Could not download any SMUL spreadsheet.")
 
     if df is None or df.empty:
         log.warning(
@@ -814,6 +842,7 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         "VALIDADE AUTO": "smul_validade",
         "Nº AUTO LICENÇA": "smul_auto",
         "Processo": "smul_processo",
+        "Publicação": "smul_publicacao_doc",
     }
     df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
@@ -823,6 +852,11 @@ def load_smul(local_file: str | None = None) -> pd.DataFrame:
         df["smul_vigente"] = df["smul_validade"] >= pd.Timestamp.now()
     else:
         df["smul_vigente"] = True
+
+    if "smul_publicacao_doc" in df.columns:
+        df["smul_publicacao_doc"] = pd.to_datetime(
+            df["smul_publicacao_doc"], errors="coerce"
+        )
 
     # --- Build address key for matching ---
     df["_smul_addr_key"] = df.apply(
@@ -848,6 +882,8 @@ def merge_smul(
         "smul_validade",
         "smul_vigente",
         "smul_proprietario",
+        "smul_processo",
+        "smul_publicacao_doc",
     ]
     if df_smul.empty:
         for col in smul_cols:
@@ -1447,14 +1483,31 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
             p.append(f"<b>Nome SMUL:</b> {smul_nome_val}<br>")
         if smul_auto:
             p.append(f"<b>Auto licen\u00e7a:</b> {smul_auto}<br>")
+        smul_proc = _fmt(row.get("smul_processo"))
+        if smul_proc:
+            p.append(f"<b>Processo:</b> {smul_proc}<br>")
         if pd.notna(smul_val):
             smul_val_str = _fmt(smul_val, fmt_date=True) or str(smul_val)[:10]
             vig_color = "#2ecc71" if smul_vig else "#e74c3c"
             vig_text = "Vigente" if smul_vig else "Vencida"
+            # Alert if expiring within 12 months
+            if smul_vig and pd.notna(smul_val):
+                months_left = (
+                    pd.Timestamp(smul_val) - pd.Timestamp.now()
+                ).days / 30
+                if months_left <= 12:
+                    vig_color = "#e67e22"
+                    vig_text = f"Vence em {int(months_left)} meses"
             p.append(
                 f"<b>Validade:</b> {smul_val_str} "
                 f"(<span style='color:{vig_color};font-weight:bold'>"
                 f"{vig_text}</span>)<br>"
+            )
+        smul_pub = row.get("smul_publicacao_doc")
+        if pd.notna(smul_pub):
+            pub_str = _fmt(smul_pub, fmt_date=True) or str(smul_pub)[:10]
+            p.append(
+                f"<b>Publicado no DOC:</b> {pub_str}<br>"
             )
         if smul_prop:
             p.append(f"<b>Propriet\u00e1rio:</b> {smul_prop}<br>")
@@ -1846,6 +1899,8 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "smul_nome",
         "smul_proprietario",
         "smul_auto",
+        "smul_processo",
+        "smul_publicacao_doc",
         "smul_validade",
         "smul_vigente",
         "status_consolidado",
@@ -1947,14 +2002,121 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     n_smul_vencida = n_smul - n_smul_vigente
     smul_val_min = ""
     smul_val_max = ""
+    smul_with_lic = gdf[gdf.get("smul_licenciado", pd.Series([False])) == True] if "smul_licenciado" in gdf.columns else gdf.iloc[0:0]
     if "smul_validade" in gdf.columns and n_smul > 0:
         smul_vals = pd.to_datetime(
-            gdf.loc[gdf["smul_licenciado"] == True, "smul_validade"], errors="coerce"
+            smul_with_lic["smul_validade"], errors="coerce"
         ).dropna()
         if not smul_vals.empty:
             smul_val_min = smul_vals.min().strftime("%d/%m/%Y")
             smul_val_max = smul_vals.max().strftime("%d/%m/%Y")
     n_sem_lic = n_total - n_smul
+
+    # --- SMUL: Recent processes (last 15 by publication date) ---
+    recent_smul_html = ""
+    if "smul_publicacao_doc" in gdf.columns and n_smul > 0:
+        smul_pub = smul_with_lic.copy()
+        smul_pub["_pub_dt"] = pd.to_datetime(smul_pub["smul_publicacao_doc"], errors="coerce")
+        smul_pub = smul_pub.dropna(subset=["_pub_dt"]).sort_values("_pub_dt", ascending=False).head(15)
+        rows = []
+        for _, r in smul_pub.iterrows():
+            nome = r.get("smul_nome") or r.get("gs_nome") or "?"
+            proc = r.get("smul_processo") or "-"
+            pub_dt = r["_pub_dt"].strftime("%d/%m/%Y")
+            val_dt = pd.to_datetime(r.get("smul_validade"), errors="coerce")
+            val_str = val_dt.strftime("%d/%m/%Y") if pd.notna(val_dt) else "-"
+            auto = r.get("smul_auto") or "-"
+            vig = bool(r.get("smul_vigente", False))
+            vig_badge = (
+                '<span class="status-badge badge-regular">Vigente</span>'
+                if vig else
+                '<span class="status-badge badge-irregular">Vencida</span>'
+            )
+            rows.append(
+                f"    <tr><td>{pub_dt}</td><td>{nome}</td><td>{auto}</td>"
+                f"<td>{proc}</td><td>{val_str}</td><td>{vig_badge}</td></tr>"
+            )
+        recent_smul_html = "\n".join(rows)
+
+    # --- SMUL: Expiring alerts ---
+    alert_smul_html = ""
+    if "smul_validade" in gdf.columns and n_smul > 0:
+        now = pd.Timestamp.now()
+        smul_alert = smul_with_lic.copy()
+        smul_alert["_val_dt"] = pd.to_datetime(smul_alert["smul_validade"], errors="coerce")
+        # Already expired
+        expired = smul_alert[smul_alert["_val_dt"] < now].sort_values("_val_dt")
+        # Expiring within 12 months
+        expiring = smul_alert[
+            smul_alert["_val_dt"].between(now, now + pd.DateOffset(months=12))
+        ].sort_values("_val_dt")
+        alert_rows = []
+        for _, r in expired.iterrows():
+            nome = r.get("smul_nome") or "?"
+            val_str = r["_val_dt"].strftime("%d/%m/%Y") if pd.notna(r["_val_dt"]) else "?"
+            days_ago = (now - r["_val_dt"]).days
+            alert_rows.append(
+                f'    <tr style="background:#ffeaea"><td>{nome}</td>'
+                f"<td>{val_str}</td>"
+                f'<td><span class="status-badge badge-irregular">Vencida há {days_ago} dias</span></td>'
+                f"<td>{r.get('smul_processo', '-')}</td></tr>"
+            )
+        for _, r in expiring.iterrows():
+            nome = r.get("smul_nome") or "?"
+            val_str = r["_val_dt"].strftime("%d/%m/%Y") if pd.notna(r["_val_dt"]) else "?"
+            days_left = (r["_val_dt"] - now).days
+            months_left = days_left // 30
+            alert_rows.append(
+                f'    <tr style="background:#fff8e1"><td>{nome}</td>'
+                f"<td>{val_str}</td>"
+                f'<td><span class="status-badge badge-warn">Vence em {months_left} meses</span></td>'
+                f"<td>{r.get('smul_processo', '-')}</td></tr>"
+            )
+        alert_smul_html = "\n".join(alert_rows)
+        n_alerts = len(expired) + len(expiring)
+
+    # --- Divergências GeoSampa vs SMUL ---
+    # GeoSampa deferidos sem SMUL
+    gs_def_no_smul_html = ""
+    n_gs_def_no_smul = 0
+    if "gs_situacao" in gdf.columns:
+        gs_def_no_smul = gdf[
+            (gdf["gs_situacao"].fillna("").str.contains("Deferido", case=False)) &
+            (gdf.get("smul_licenciado", pd.Series([False] * n_total)) != True)
+        ]
+        n_gs_def_no_smul = len(gs_def_no_smul)
+        rows = []
+        for _, r in gs_def_no_smul.head(20).iterrows():
+            nome = r.get("gs_nome") or "?"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci):
+                oaci = "-"
+            endereco = r.get("gs_endereco") or "-"
+            distrito = r.get("nm_distrito_municipal") or "-"
+            gs_proc = r.get("cd_processo_administrativo_heliponto") or "-"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td><td>{endereco}</td>"
+                f"<td>{distrito}</td><td>{gs_proc}</td></tr>"
+            )
+        gs_def_no_smul_html = "\n".join(rows)
+
+    # SMUL sem correspondência no GeoSampa
+    smul_no_gs_html = ""
+    n_smul_no_gs = 0
+    if n_smul > 0:
+        smul_no_gs = smul_with_lic[smul_with_lic["gs_nome"].isna()] if "gs_nome" in gdf.columns else smul_with_lic
+        n_smul_no_gs = len(smul_no_gs)
+        rows = []
+        for _, r in smul_no_gs.head(20).iterrows():
+            nome = r.get("smul_nome") or "?"
+            auto = r.get("smul_auto") or "-"
+            proc = r.get("smul_processo") or "-"
+            vig = bool(r.get("smul_vigente", False))
+            vig_txt = "Vigente" if vig else "Vencida"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{auto}</td><td>{proc}</td><td>{vig_txt}</td></tr>"
+            )
+        smul_no_gs_html = "\n".join(rows)
 
     # --- Spatial match stats ---
     dist = gdf["dist_metros"] if "dist_metros" in gdf.columns else pd.Series(dtype=float)
@@ -2154,12 +2316,46 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     <div class="card"><div class="number green">{n_smul_vigente}</div><div class="label">Vigentes</div></div>
     <div class="card"><div class="number red">{n_smul_vencida}</div><div class="label">Vencidas</div></div>
   </div>
-  <p>A SMUL (Secretaria Municipal de Urbanismo e Licenciamento) emite autos de licença de funcionamento conforme Decreto nº 58.094/2018.</p>
+  <p>A SMUL (Secretaria Municipal de Urbanismo e Licenciamento) emite autos de licença de funcionamento conforme Decreto nº 58.094/2018. Cada auto é publicado no <b>Diário Oficial da Cidade de São Paulo (DOC)</b>.</p>
   <p>Validade mais próxima a vencer: <b>{smul_val_min}</b> &mdash; Validade mais distante: <b>{smul_val_max}</b></p>
-  <p style="color:#e74c3c;font-weight:bold">&gt; {n_sem_lic} helipontos ({pct(n_sem_lic)}) não possuem licença SMUL registrada.</p>
+  <p style="color:#e74c3c;font-weight:bold">{n_sem_lic} helipontos ({pct(n_sem_lic)}) não possuem licença SMUL registrada.</p>
+
+  <h3>Processos Mais Recentes (publicados no DOC)</h3>
+  <p style="font-size:12px;color:#7f8c8d">Autos de licença de funcionamento publicados no Diário Oficial da Cidade de São Paulo, ordenados por data de publicação.</p>
+  <table>
+    <tr><th>Publicação DOC</th><th>Heliponto</th><th>Nº Auto</th><th>Processo</th><th>Validade</th><th>Situação</th></tr>
+{recent_smul_html}
+  </table>
+
+  <h3>Alertas de Vencimento</h3>
+  <p>Licenças vencidas ou com vencimento nos próximos 12 meses.</p>
+  <table>
+    <tr><th>Heliponto</th><th>Validade</th><th>Situação</th><th>Processo</th></tr>
+{alert_smul_html}
+  </table>
 </div>
 
-<h2>5. Distribuição Geográfica (Top 10 Distritos)</h2>
+<h2>5. Divergências GeoSampa vs SMUL</h2>
+<div class="section">
+  <p>Cruzamento entre a base GeoSampa (cadastro de helipontos da Prefeitura) e a planilha SMUL (autos de licença de funcionamento).</p>
+
+  <h3>Deferidos no GeoSampa sem Licença SMUL ({n_gs_def_no_smul})</h3>
+  <p style="color:#e67e22">Helipontos com processo <b>deferido</b> na Prefeitura (GeoSampa), mas sem auto de licença na SMUL — possivelmente operando sem licença de funcionamento vigente.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Endereço</th><th>Distrito</th><th>Processo GeoSampa</th></tr>
+{gs_def_no_smul_html}
+  </table>
+  <p style="font-size:11px;color:#7f8c8d">Exibindo até 20 registros.</p>
+
+  <h3>Licença SMUL sem Cadastro no GeoSampa ({n_smul_no_gs})</h3>
+  <p style="color:#e67e22">Helipontos com auto de licença SMUL emitido, mas sem correspondência na base GeoSampa — possível divergência cadastral.</p>
+  <table>
+    <tr><th>Nome SMUL</th><th>Nº Auto</th><th>Processo</th><th>Situação</th></tr>
+{smul_no_gs_html}
+  </table>
+</div>
+
+<h2>6. Distribuição Geográfica (Top 10 Distritos)</h2>
 <div class="section">
   <table>
     <tr><th>Distrito</th><th>Helipontos</th><th>% do Total</th></tr>
@@ -2168,7 +2364,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   <p style="color:#7f8c8d;font-size:12px;margin-top:8px">Nota: Helipontos cadastrados apenas na ANAC (sem GeoSampa) não possuem distrito informado.</p>
 </div>
 
-<h2>6. Qualidade do Cruzamento de Dados</h2>
+<h2>7. Qualidade do Cruzamento de Dados</h2>
 <div class="section">
   <p>O cruzamento GeoSampa &times; ANAC utiliza uma estratégia multi-passe: (1) código OACI exato, (2) proximidade espacial (raio de 100m), (3) correspondência por nome.</p>
   <table>
@@ -2184,7 +2380,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   </table>
 </div>
 
-<h2>7. Conclusões e Achados Principais</h2>
+<h2>8. Conclusões e Achados Principais</h2>
 <div class="section">
   <ol style="padding-left:20px">
     <li style="margin-bottom:10px"><b>Apenas {pct(n_regular)} dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros {pct(n_irregular)} apresentam alguma irregularidade.</li>
@@ -2195,6 +2391,9 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     <li style="margin-bottom:10px"><b>{n_priv} helipontos são privados</b> e <b>{n_mil} são militares</b>.</li>
     <li style="margin-bottom:10px"><b>{total_ciclos} ciclos/dia estão autorizados</b> no total, com média de {media_ciclos} por heliponto.</li>
     <li style="margin-bottom:10px"><b>{n_vfr_diurno} helipontos operam apenas de dia</b> (VFR Diurna) — não aceitam pousos noturnos.</li>
+    <li style="margin-bottom:10px"><b>{n_gs_def_no_smul} helipontos deferidos no GeoSampa não possuem licença SMUL</b>, indicando possível operação sem licença de funcionamento.</li>
+    <li style="margin-bottom:10px"><b>{n_smul_no_gs} licenças SMUL não têm correspondência no GeoSampa</b>, sugerindo divergência entre as bases da Prefeitura.</li>
+    <li style="margin-bottom:10px"><b>Todo auto de licença SMUL é publicado no Diário Oficial da Cidade de São Paulo</b> — as datas de publicação estão registradas na planilha.</li>
     <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
   </ol>
 </div>
