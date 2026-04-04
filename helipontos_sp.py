@@ -2441,18 +2441,26 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
 
 <h2>6. Fiscalização — Diário Oficial da Cidade de SP</h2>
 <div class="section">
-  <p>Levantamento de publicações no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) relacionadas a processos SMUL/CONTRU (6068.xxxx) de helipontos, cobrindo publicações de março/2023 em diante.</p>
+  <p>Levantamento de publicações no <b>Diário Oficial da Cidade de São Paulo</b> (DOC) relacionadas a helipontos, cobrindo publicações de março/2023 em diante.</p>
   <div class="grid">
-    <div class="card"><div class="number blue">151</div><div class="label">Processos SMUL no DOC</div></div>
+    <div class="card"><div class="number blue">151</div><div class="label">Processos SMUL/CONTRU no DOC</div></div>
     <div class="card"><div class="number orange">119</div><div class="label">Não constam na planilha SMUL</div></div>
     <div class="card"><div class="number red">94</div><div class="label">Com ação fiscal</div></div>
   </div>
+
+  <h3>Busca por código OACI</h3>
+  <p>Dos 266 códigos OACI pesquisados, <b>10</b> foram encontrados em publicações do DOC (majoritariamente em processos CADES/SVMA de parecer ambiental).</p>
+
+  <h3>Busca por nome — Deferidos sem SMUL</h3>
+  <p>Dos 130 helipontos deferidos no GeoSampa sem licença SMUL, <b>39</b> foram encontrados no DOC. Desses, <b>23 têm processos SMUL (6068.xxxx)</b> — a Prefeitura já está agindo sobre eles com notificações e fiscalização.</p>
+
   <p>A maioria das publicações são <b>"Comunique-se"</b> (notificações de ALFH — Auto de Licença de Funcionamento de Heliponto) e <b>"Despacho Documental"</b> referentes a ações fiscais por operação sem licença válida.</p>
+
   <div style="background:#fff3e0;border-left:4px solid #e67e22;padding:12px 16px;margin:12px 0;border-radius:4px">
     <b>Achado relevante:</b> 119 dos 151 processos SMUL publicados no DOC desde 2023 <b>não constam na planilha de autos SMUL</b>. Isso indica que são processos de fiscalização, notificação ou revalidação pendente — e não autos emitidos.<br>
     <span style="font-size:12px;color:#7f8c8d">94 processos mencionam <b>ação fiscal</b>, confirmando que a CONTRU está fiscalizando ativamente helipontos sem licença de funcionamento vigente.</span>
   </div>
-  <p style="font-size:11px;color:#7f8c8d">Fonte: busca por "heliponto funcionamento" no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023. Processos identificados pelo padrão 6068.xxxx (SMUL/CONTRU).</p>
+  <p style="font-size:11px;color:#7f8c8d">Fonte: busca no DOC (diariooficial.prefeitura.sp.gov.br), versão pós-março/2023. Buscas por "heliponto funcionamento", códigos OACI e nomes de helipontos.</p>
 </div>
 
 <h2>7. Distribuição Geográfica (Top 10 Distritos)</h2>

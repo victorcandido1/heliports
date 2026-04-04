@@ -1,0 +1,777 @@
+{
+  "Heliponto BW1 Morumbi": {
+    "search": "heliponto BW1 Morumbi",
+    "oaci": "",
+    "proc_gs": "2014-0.051.081-0",
+    "total_doc": 2,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2025/0001449-0",
+        "tipo": "Deliberação"
+      }
+    ]
+  },
+  "Heliponto Privado JK Square - SP 1332": {
+    "search": "heliponto JK Square",
+    "oaci": "",
+    "proc_gs": "6027.2025/0010584-0",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2025/0010584-0",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2025/0010584-0",
+        "tipo": "Deliberação"
+      }
+    ]
+  },
+  "Heliponto Privado CARMO COURI": {
+    "search": "heliponto CARMO COURI",
+    "oaci": "SDYA",
+    "proc_gs": "6027.2025/0005314-9",
+    "total_doc": 4,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2025/0005314-9",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2025/0005314-9",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2025/0005314-9",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6050.2024/3040272-2",
+        "tipo": "Intimação"
+      }
+    ]
+  },
+  "Heliponto New Century": {
+    "search": "heliponto New Century",
+    "oaci": "SILF",
+    "proc_gs": "2010-0.336.863-4",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2023/0008483-4",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado \"ATRIUM V\"": {
+    "search": "heliponto ATRIUM V",
+    "oaci": "SDTI",
+    "proc_gs": "6027.2022/0010238-1",
+    "total_doc": 9,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2023/0003524-8",
+        "tipo": "Decisão"
+      },
+      {
+        "processo": "6027.2022/0010238-1",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2022/0010238-1",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "1020.2022/0016094-0",
+        "tipo": "Despacho indeferido"
+      },
+      {
+        "processo": "6027.2022/0010238-1",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado Birmann 32": {
+    "search": "heliponto Birmann 32",
+    "oaci": "SN66",
+    "proc_gs": "6027.2022/0009644-6",
+    "total_doc": 4,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2022/0009644-6",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2022/0009644-6",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2022/0009644-6",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2022/0009644-6",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado Ibirapuera Park Hotel Ltda": {
+    "search": "heliponto Ibirapuera Park Hotel Ltda",
+    "oaci": "SDPL",
+    "proc_gs": "6027.2023/0011091-2",
+    "total_doc": 5,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2024/0013590-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0011091-2",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2023/0011091-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0011091-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0011091-2",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado Millennium (SP) - SP0431": {
+    "search": "heliponto Millennium (SP)",
+    "oaci": "SDUJ",
+    "proc_gs": "6027.2022/0005474-3",
+    "total_doc": 6,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "1020.2023/0019956-3",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2023/0019956-3",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2023/0019956-3",
+        "tipo": "Despacho indeferido"
+      },
+      {
+        "processo": "6027.2022/0005474-3",
+        "tipo": "Despacho Documental"
+      },
+      {
+        "processo": "6027.2022/0005474-3",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado Joli - SP1340": {
+    "search": "heliponto Joli",
+    "oaci": "",
+    "proc_gs": "6027.2021/0007697-4",
+    "total_doc": 10,
+    "n_smul": 4,
+    "procs": [
+      {
+        "processo": "6068.2023/0003524-8",
+        "tipo": "Decisão"
+      },
+      {
+        "processo": "6068.2023/0001544-1",
+        "tipo": "Ata"
+      },
+      {
+        "processo": "6068.2023/0001544-1",
+        "tipo": "Convocação"
+      },
+      {
+        "processo": "6068.2025/0008306-8",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "1020.2023/0014804-7",
+        "tipo": "Despacho indeferido"
+      }
+    ]
+  },
+  "Heliponto Privado Torre Sigma": {
+    "search": "heliponto Torre Sigma",
+    "oaci": "",
+    "proc_gs": "6027.2019/0002404-0",
+    "total_doc": 3,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2019/0002404-0",
+        "tipo": "Despacho Documental"
+      },
+      {
+        "processo": "6027.2019/0002404-0",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2019/0005749-6",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Privado Blue Tree Towers Faria Lima - SP0764": {
+    "search": "heliponto Blue Tree Towers Faria Lima",
+    "oaci": "SSOA",
+    "proc_gs": "6027.2021/0012271-2",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2021/0012271-2",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  },
+  "Heliponto Privado \"ITAU S/A\"": {
+    "search": "heliponto ITAU S/A",
+    "oaci": "SDTU",
+    "proc_gs": "6027.2021/0007718-0",
+    "total_doc": 20,
+    "n_smul": 4,
+    "procs": [
+      {
+        "processo": "1020.2023/0011963-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2023/0011963-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2025/0004197-7",
+        "tipo": "Ato"
+      },
+      {
+        "processo": "6027.2025/0008275-0",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2025/0008275-0",
+        "tipo": "Despacho"
+      }
+    ]
+  },
+  "Heliponto DJY Yunes- SP 0327": {
+    "search": "heliponto DJY Yunes",
+    "oaci": "",
+    "proc_gs": "6027.2024/0019859-5",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2024/0019859-5",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2024/0019859-5",
+        "tipo": "Despacho"
+      }
+    ]
+  },
+  "Heliponto TORRE 2000 - SP0504": {
+    "search": "heliponto TORRE 2000",
+    "oaci": "SIIH",
+    "proc_gs": "6027.2023/0020954-4",
+    "total_doc": 5,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2023/0020954-4",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2023/0020954-4",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2023/0020954-4",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0020954-4",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Seculum - SP0686": {
+    "search": "heliponto Seculum",
+    "oaci": "",
+    "proc_gs": "6027.2023/0016505-9",
+    "total_doc": 6,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2025/0007369-0",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6050.2025/3021478-2",
+        "tipo": "Intimação"
+      },
+      {
+        "processo": "6027.2023/0016505-9",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2023/0016505-9",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2023/0016505-9",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Oscar Freire": {
+    "search": "heliponto Oscar Freire",
+    "oaci": "",
+    "proc_gs": "6027.2024/0017592-7",
+    "total_doc": 4,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6027.2024/0017592-7",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2024/0017592-7",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2024/0017592-7",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2023/0008043-0",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Renaissance Hotel - SDRB": {
+    "search": "heliponto Renaissance Hotel",
+    "oaci": "SDRB",
+    "proc_gs": "6027.2019/0001162-3",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2019/0001162-3",
+        "tipo": "Deliberação"
+      }
+    ]
+  },
+  "Heliponto 9 de Julho": {
+    "search": "heliponto 9 de Julho",
+    "oaci": "",
+    "proc_gs": "2013-0.326.238-6",
+    "total_doc": 8,
+    "n_smul": 2,
+    "procs": [
+      {
+        "processo": "6068.2025/0004424-0",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6510.2023/0003412-0",
+        "tipo": "Comunicado"
+      },
+      {
+        "processo": "6510.2023/0004734-5",
+        "tipo": "Comunicado"
+      },
+      {
+        "processo": "6068.2023/0000935-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2019/0005749-6",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Atrium VI. Com": {
+    "search": "heliponto Atrium VI. Com",
+    "oaci": "SJBP",
+    "proc_gs": "2015-0.046.375-9",
+    "total_doc": 3,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "1020.2023/0014030-5",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2023/0014030-5",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2023/0014030-5",
+        "tipo": "Despacho indeferido"
+      }
+    ]
+  },
+  "Heliponto Joaquim Floriano - SIKT": {
+    "search": "heliponto Joaquim Floriano",
+    "oaci": "SIKT",
+    "proc_gs": "6027.2019/0000179-2",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2021/0000096-3",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  },
+  "Heliponto Vigor - SNVO": {
+    "search": "heliponto Vigor",
+    "oaci": "SNVO",
+    "proc_gs": "2018-0.004.802-9",
+    "total_doc": 20,
+    "n_smul": 4,
+    "procs": [
+      {
+        "processo": "6068.2024/0004900-3",
+        "tipo": ""
+      },
+      {
+        "processo": "6013.2025/0009112-5",
+        "tipo": "Resolução"
+      },
+      {
+        "processo": "6068.2025/0004197-7",
+        "tipo": "Ato"
+      },
+      {
+        "processo": "6510.2025/0000001-6",
+        "tipo": "Comunicado"
+      },
+      {
+        "processo": "6510.2025/0000001-6",
+        "tipo": "Comunicado"
+      }
+    ]
+  },
+  "Heliponto Faria Lima Financial Center - SIJF": {
+    "search": "heliponto Faria Lima Financial Center",
+    "oaci": "SIJF",
+    "proc_gs": "6027.2019/0001111-9",
+    "total_doc": 4,
+    "n_smul": 4,
+    "procs": [
+      {
+        "processo": "6068.2024/0003229-1",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2024/0000027-6",
+        "tipo": "Ato"
+      },
+      {
+        "processo": "6068.2023/0007447-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2023/0005985-6",
+        "tipo": "Ato"
+      }
+    ]
+  },
+  "Heliponto Miss Silvia Morizono": {
+    "search": "heliponto Miss Silvia Morizono",
+    "oaci": "SNSZ",
+    "proc_gs": "2018-0.008.297-1",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2023/0016186-0",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0016186-0",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Hospital Santa Catarina": {
+    "search": "heliponto Hospital Santa Catarina",
+    "oaci": "SIHK",
+    "proc_gs": "2017-0.153.551-0",
+    "total_doc": 4,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2024/0027042-3",
+        "tipo": "Deliberação"
+      },
+      {
+        "processo": "6027.2024/0027042-3",
+        "tipo": "Despacho"
+      },
+      {
+        "processo": "6027.2024/0027042-3",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Patio Victor Malzoni": {
+    "search": "heliponto Patio Victor Malzoni",
+    "oaci": "SDVR",
+    "proc_gs": "2016-0.270.574-3",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2022/0008726-2",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto VIVICON": {
+    "search": "heliponto VIVICON",
+    "oaci": "SJVC",
+    "proc_gs": "2012-0.197.323-2",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2021/0004282-8",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Igreja Mundial Poder de Deus - IMPD": {
+    "search": "heliponto Igreja Mundial Poder de Deus",
+    "oaci": "IMPD",
+    "proc_gs": "2018-0.004.935-1",
+    "total_doc": 6,
+    "n_smul": 3,
+    "procs": [
+      {
+        "processo": "6068.2024/0012944-9",
+        "tipo": "Despacho Documental"
+      },
+      {
+        "processo": "6068.2025/0004728-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2025/0004728-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "1020.2020/0014489-5",
+        "tipo": "Despacho deferido"
+      }
+    ]
+  },
+  "Heliponto FECOMERCIO II": {
+    "search": "heliponto FECOMERCIO II",
+    "oaci": "SJFC",
+    "proc_gs": "2018-0.073.258-5",
+    "total_doc": 1,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6510.2025/0000001-6",
+        "tipo": "Comunicado"
+      }
+    ]
+  },
+  "Heliponto Bertolucci": {
+    "search": "heliponto Bertolucci",
+    "oaci": "SDVR",
+    "proc_gs": "2011-0.270.179-0",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2023/0010620-0",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto San Paolo": {
+    "search": "heliponto San Paolo",
+    "oaci": "SDFW",
+    "proc_gs": "2012-0.086.256-9",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2021/0000235-4",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  },
+  "Heliponto Thera Corporate": {
+    "search": "heliponto Thera Corporate",
+    "oaci": "",
+    "proc_gs": "2011-0.252.520-7",
+    "total_doc": 3,
+    "n_smul": 2,
+    "procs": [
+      {
+        "processo": "6068.2025/0007367-4",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2023/0009295-0",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  },
+  "Heliponto do Hospital Total Cor": {
+    "search": "heliponto do Hospital Total Cor",
+    "oaci": "",
+    "proc_gs": "2012-0.070.323-1",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6510.2025/0000001-6",
+        "tipo": "Comunicado"
+      }
+    ]
+  },
+  "Heliponto do Hospital Alvorada": {
+    "search": "heliponto do Hospital Alvorada",
+    "oaci": "",
+    "proc_gs": "2010-0.267.796-0",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2024/0001975-9",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto do Hospital Albert Einstein": {
+    "search": "heliponto do Hospital Albert Einstein",
+    "oaci": "",
+    "proc_gs": "2010-0.207.347-9",
+    "total_doc": 1,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "1020.2024/0021371-1",
+        "tipo": "Despacho indeferido"
+      }
+    ]
+  },
+  "Heliponto Santander": {
+    "search": "heliponto Santander",
+    "oaci": "SWHH",
+    "proc_gs": "2011-0.294.390-4",
+    "total_doc": 2,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6050.2021/0007667-8",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6068.2023/0000935-2",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Miss Silvia Morizono - SNSZ": {
+    "search": "heliponto Miss Silvia Morizono",
+    "oaci": "SNSZ",
+    "proc_gs": "2018-0.008.297-1",
+    "total_doc": 2,
+    "n_smul": 0,
+    "procs": [
+      {
+        "processo": "6027.2023/0016186-0",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2023/0016186-0",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Rec Berrini S/A": {
+    "search": "heliponto Rec Berrini S/A",
+    "oaci": "",
+    "proc_gs": "2010-0.206.718-5",
+    "total_doc": 2,
+    "n_smul": 2,
+    "procs": [
+      {
+        "processo": "6068.2020/0004458-6",
+        "tipo": "Despacho Documental"
+      },
+      {
+        "processo": "6068.2020/0004456-0",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  },
+  "Heliponto Cidade Jardim": {
+    "search": "heliponto Cidade Jardim",
+    "oaci": "",
+    "proc_gs": "2018-0.097.242-0",
+    "total_doc": 20,
+    "n_smul": 2,
+    "procs": [
+      {
+        "processo": "6068.2024/0012945-7",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6017.2023/0069758-7",
+        "tipo": "Decreto"
+      },
+      {
+        "processo": "6068.2023/0009215-2",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2022/0009712-4",
+        "tipo": "Comunique-se"
+      },
+      {
+        "processo": "6027.2018/0005889-0",
+        "tipo": "Comunique-se"
+      }
+    ]
+  },
+  "Heliponto Divena": {
+    "search": "heliponto Divena",
+    "oaci": "SIHD",
+    "proc_gs": "6027.2020/0011002-0",
+    "total_doc": 1,
+    "n_smul": 1,
+    "procs": [
+      {
+        "processo": "6068.2020/0004566-3",
+        "tipo": "Despacho Documental"
+      }
+    ]
+  }
+}
