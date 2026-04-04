@@ -289,16 +289,22 @@ def enrich_with_aisweb(
             oacis.add(o)
 
     n_fetched = 0
+    n_to_fetch = sum(1 for o in oacis if o not in cache) if fetch_missing else 0
+    if n_to_fetch:
+        log.info("AISWEB: %d OACIs to fetch (%d already cached)", n_to_fetch, len(cache))
+
     for oaci in sorted(oacis):
         if oaci in cache:
             data = cache[oaci]
         elif fetch_missing:
             data = _fetch_aisweb_oaci(oaci)
-            if data:
-                cache[oaci] = data
-                n_fetched += 1
-                save_aisweb_cache(cache, cache_path)  # salva a cada novo
-                time.sleep(0.15)  # rate limit para não sobrecarregar AISWEB
+            # Cache both hits and misses (None) to avoid re-fetching
+            cache[oaci] = data
+            n_fetched += 1
+            if n_fetched % 10 == 0 or n_fetched == n_to_fetch:
+                log.info("AISWEB: fetched %d/%d ...", n_fetched, n_to_fetch)
+            save_aisweb_cache(cache, cache_path)
+            time.sleep(0.15)  # rate limit
         else:
             data = None
 
@@ -307,7 +313,8 @@ def enrich_with_aisweb(
             gdf.loc[mask, "aisweb_dimensoes"] = data.get("dimensoes")
             gdf.loc[mask, "aisweb_mtow"] = data.get("mtow_display")
             gdf.loc[mask, "aisweb_superficie"] = data.get("superficie")
-        log.info("AISWEB: fetched %d new records, cached %d total", n_fetched, len(cache))
+
+    log.info("AISWEB: fetched %d new records, cached %d total", n_fetched, len(cache))
 
     n_with_data = gdf["aisweb_dimensoes"].notna().sum()
     log.info("AISWEB: %d heliports with dimensions/MTOW data", int(n_with_data))
@@ -432,6 +439,10 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
         rename[col_map["oaci"]] = "anac_oaci"
     if col_map["ciad"]:
         rename[col_map["ciad"]] = "anac_ciad"
+    if col_map.get("tipo"):
+        rename[col_map["tipo"]] = "anac_tipo"
+    if col_map.get("municipio"):
+        rename[col_map["municipio"]] = "anac_municipio"
 
     # Detect operation / status column
     status_col = col_map.get("operacao") or col_map.get("validade")
@@ -533,6 +544,7 @@ def _detect_anac_columns(df: pd.DataFrame) -> dict:
         "ciad": _find("CIAD"),
         "uf": _find("UF"),
         "municipio": _find("MUNIC", "CIDADE"),
+        "tipo": _find("TIPO"),
         "operacao": _find("OPERA"),
         "validade": _find("VALIDADE", "EFETIVA"),
     }
@@ -1017,21 +1029,70 @@ def merge_smul(
 # ---------------------------------------------------------------------------
 
 
+def _normalize_name(name) -> str:
+    """Normalize a heliport name for fuzzy comparison."""
+    if pd.isna(name) or not str(name).strip():
+        return ""
+    import unicodedata
+    s = str(name).upper().strip()
+    # Remove accents
+    s = "".join(
+        c for c in unicodedata.normalize("NFD", s)
+        if unicodedata.category(c) != "Mn"
+    )
+    # Remove common prefixes/suffixes
+    for prefix in ["HELIPONTO ", "HELIPORTO ", "HELIP. ", "COND. ED. ", "COND. ", "ED. ", "EDIFICIO "]:
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    return s.strip()
+
+
 def spatial_join(
     gdf_geosampa: gpd.GeoDataFrame,
     gdf_anac: gpd.GeoDataFrame,
     buffer_m: int = BUFFER_METROS,
 ) -> gpd.GeoDataFrame:
-    """Cross-reference GeoSampa and ANAC by proximity (nearest within buffer)."""
+    """Cross-reference GeoSampa and ANAC by proximity (nearest within buffer).
+
+    Uses a multi-pass strategy:
+    1. Exact OACI code match (most reliable)
+    2. Spatial proximity (sjoin_nearest within buffer)
+    3. Fuzzy name matching for remaining unmatched records
+    """
 
     # Project to UTM for metre-based distance
     gs = gdf_geosampa.to_crs(CRS_UTM23S).copy()
     gs["_gs_idx"] = range(len(gs))
     anac = gdf_anac.to_crs(CRS_UTM23S).copy()
+    anac["_anac_idx"] = anac.index.copy()
 
-    # --- 1. Match GeoSampa → nearest ANAC ---
+    # --- Pass 0: Exact OACI code match ---
+    # Build OACI lookup from ANAC
+    anac_oaci_map = {}  # OACI -> anac index
+    for idx, row in anac.iterrows():
+        oaci = str(row.get("anac_oaci") or "").strip().upper()
+        if oaci:
+            anac_oaci_map[oaci] = idx
+
+    oaci_matched_gs = set()   # GeoSampa _gs_idx matched via OACI
+    oaci_matched_anac = set()  # ANAC indices matched via OACI
+
+    oaci_pairs = []  # (gs_idx, anac_idx) pairs
+    for gs_idx, gs_row in gs.iterrows():
+        gs_oaci = str(gs_row.get("gs_oaci") or "").strip().upper()
+        if gs_oaci and gs_oaci in anac_oaci_map:
+            anac_idx = anac_oaci_map[gs_oaci]
+            oaci_pairs.append((gs_row["_gs_idx"], anac_idx))
+            oaci_matched_gs.add(gs_row["_gs_idx"])
+            oaci_matched_anac.add(anac_idx)
+
+    log.info("OACI exact match: %d pairs", len(oaci_pairs))
+
+    # --- Pass 1: Spatial proximity for remaining GeoSampa records ---
+    gs_remaining = gs[~gs["_gs_idx"].isin(oaci_matched_gs)]
+
     joined = gpd.sjoin_nearest(
-        gs,
+        gs_remaining,
         anac,
         how="left",
         max_distance=buffer_m,
@@ -1043,8 +1104,83 @@ def spatial_join(
         subset=["_gs_idx"], keep="first"
     )
 
+    # --- Pass 2: Fuzzy name matching for still-unmatched GeoSampa records ---
+    spatial_matched_gs = set(
+        joined.dropna(subset=["dist_metros"])["_gs_idx"].values
+    )
+    spatial_matched_anac = set(
+        joined.dropna(subset=["dist_metros"])["index_right"].dropna().astype(int)
+    )
+    all_matched_anac = oaci_matched_anac | spatial_matched_anac
+
+    unmatched_gs_mask = joined["dist_metros"].isna()
+    if unmatched_gs_mask.any():
+        # Build normalized name index from unmatched ANAC records
+        anac_name_idx = {}
+        for idx, row in anac.iterrows():
+            if idx not in all_matched_anac:
+                norm = _normalize_name(row.get("anac_nome"))
+                if norm:
+                    anac_name_idx[norm] = idx
+
+        name_match_count = 0
+        for joined_idx in joined.index[unmatched_gs_mask]:
+            gs_name = _normalize_name(joined.loc[joined_idx, "gs_nome"])
+            if not gs_name:
+                continue
+            # Try exact normalized name match
+            if gs_name in anac_name_idx:
+                anac_idx = anac_name_idx[gs_name]
+                anac_row = anac.loc[anac_idx]
+                for col in anac.columns:
+                    if col in joined.columns and col not in ("geometry", "_gs_idx"):
+                        joined.loc[joined_idx, col] = anac_row[col]
+                joined.loc[joined_idx, "index_right"] = anac_idx
+                joined.loc[joined_idx, "dist_metros"] = -1  # flag: matched by name
+                all_matched_anac.add(anac_idx)
+                del anac_name_idx[gs_name]
+                name_match_count += 1
+                continue
+            # Try substring match (GeoSampa names are often longer)
+            for anac_name, anac_idx in list(anac_name_idx.items()):
+                if len(anac_name) >= 4 and (anac_name in gs_name or gs_name in anac_name):
+                    anac_row = anac.loc[anac_idx]
+                    for col in anac.columns:
+                        if col in joined.columns and col not in ("geometry", "_gs_idx"):
+                            joined.loc[joined_idx, col] = anac_row[col]
+                    joined.loc[joined_idx, "index_right"] = anac_idx
+                    joined.loc[joined_idx, "dist_metros"] = -2  # flag: matched by substring
+                    all_matched_anac.add(anac_idx)
+                    del anac_name_idx[anac_name]
+                    name_match_count += 1
+                    break
+
+        log.info("Fuzzy name match: %d additional pairs", name_match_count)
+
+    # --- Merge OACI-matched pairs back into joined ---
+    if oaci_pairs:
+        oaci_rows = []
+        for gs_idx_val, anac_idx in oaci_pairs:
+            gs_row = gs[gs["_gs_idx"] == gs_idx_val].iloc[0].copy()
+            anac_row = anac.loc[anac_idx]
+            for col in anac.columns:
+                if col not in ("geometry", "_gs_idx"):
+                    gs_row[col] = anac_row[col]
+            gs_row["index_right"] = anac_idx
+            gs_row["dist_metros"] = 0  # exact OACI match
+            oaci_rows.append(gs_row)
+        oaci_df = gpd.GeoDataFrame(oaci_rows, crs=gs.crs)
+        # Ensure compatible columns
+        for col in joined.columns:
+            if col not in oaci_df.columns:
+                oaci_df[col] = None
+        for col in oaci_df.columns:
+            if col not in joined.columns:
+                joined[col] = None
+        joined = pd.concat([joined, oaci_df[joined.columns]], ignore_index=True)
+
     # --- 2. Identify ANAC records with no GeoSampa match ---
-    matched_anac_idx = set(
+    matched_anac_idx = all_matched_anac | set(
         joined.dropna(subset=["dist_metros"])["index_right"].dropna().astype(int)
     )
     unmatched_anac = anac.loc[~anac.index.isin(matched_anac_idx)].copy()
@@ -1099,6 +1235,7 @@ STATUS_COLORS = {
     "DIVERGENTE_ANAC_INATIVO": "#e67e22",
     "NÃO_CADASTRADO_ANAC": "#e74c3c",
     "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
+    "INDEFERIDO_PREFEITURA": "#8b0000",
     "SEM_LICENÇA_SMUL": "#c0392b",
     "LICENÇA_SMUL_VENCIDA": "#d35400",
 }
@@ -1108,6 +1245,7 @@ IRREGULAR_STATUSES = {
     "DIVERGENTE_ANAC_INATIVO",
     "NÃO_CADASTRADO_ANAC",
     "NÃO_CADASTRADO_PREFEITURA",
+    "INDEFERIDO_PREFEITURA",
     "SEM_LICENÇA_SMUL",
     "LICENÇA_SMUL_VENCIDA",
 }
@@ -1119,6 +1257,7 @@ def _irregular_label(status: str) -> str:
         "DIVERGENTE_ANAC_INATIVO": "IRREGULAR — ANAC inativo",
         "NÃO_CADASTRADO_ANAC": "IRREGULAR — Sem cadastro na ANAC",
         "NÃO_CADASTRADO_PREFEITURA": "IRREGULAR — Sem cadastro na Prefeitura",
+        "INDEFERIDO_PREFEITURA": "IRREGULAR — Indeferido pela Prefeitura",
         "SEM_LICENÇA_SMUL": "IRREGULAR — Sem licença SMUL",
         "LICENÇA_SMUL_VENCIDA": "IRREGULAR — Licença SMUL vencida",
     }
@@ -1183,6 +1322,8 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
     anac_ativo = row.get("anac_ativo", True)
     anac_val = row.get("anac_validade")
     anac_operacao_raw = _fmt(row.get("anac_status_raw"))
+    anac_tipo = _fmt(row.get("anac_tipo"))
+    anac_municipio = _fmt(row.get("anac_municipio"))
     has_anac = anac_nome or _fmt(row.get("anac_oaci"))
     if has_anac:
         p.append("<hr style='margin:4px 0'>")
@@ -1190,6 +1331,12 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
                  "\U0001f6e9 ANAC (Federal)</b><br>")
         if anac_nome:
             p.append(f"<b>Nome ANAC:</b> {anac_nome}<br>")
+        if anac_tipo:
+            tipo_labels = {"PRIV": "Privado", "MIL": "Militar", "PUB": "Público"}
+            tipo_display = tipo_labels.get(anac_tipo.upper(), anac_tipo)
+            p.append(f"<b>Tipo:</b> {tipo_display}<br>")
+        if anac_municipio:
+            p.append(f"<b>Município:</b> {anac_municipio}<br>")
         # Destaque operação noturna (VFR diurno = sem noturno; VFR = dia e noite)
         if anac_operacao_raw:
             oper_upper = str(anac_operacao_raw).upper()
@@ -1562,6 +1709,7 @@ def build_map(
     n_inativo = len(gdf[gdf["status_consolidado"] == "DIVERGENTE_ANAC_INATIVO"])
     n_sem_smul = len(gdf[gdf["status_consolidado"] == "SEM_LICENÇA_SMUL"])
     n_smul_venc = len(gdf[gdf["status_consolidado"] == "LICENÇA_SMUL_VENCIDA"])
+    n_indeferido = len(gdf[gdf["status_consolidado"] == "INDEFERIDO_PREFEITURA"])
 
     # Size stats for legend
     n_size_ok = int((gdf["tamanho_status"] == "OK").sum()) if "tamanho_status" in gdf.columns else 0
@@ -1613,6 +1761,9 @@ def build_map(
         <i style="background:#e67e22;width:14px;height:14px;display:inline-block;
            border-radius:50%;margin-right:6px;border:2px solid #e67e22;"></i>
         <b>ANAC inativo</b> ({n_inativo})<br>
+        <i style="background:#8b0000;width:14px;height:14px;display:inline-block;
+           border-radius:50%;margin-right:6px;border:2px solid #8b0000;"></i>
+        <b>Indeferido</b> pela Prefeitura ({n_indeferido})<br>
       </div>
     </div>
     """
@@ -1685,6 +1836,8 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
         "anac_nome",
         "anac_oaci",
         "anac_ciad",
+        "anac_tipo",
+        "anac_municipio",
         "anac_validade",
         "anac_status_raw",
         "anac_ativo",
@@ -1834,6 +1987,14 @@ def main():
         anac_ativo = row.get("anac_ativo", True)
         has_smul = bool(row.get("smul_licenciado", False))
         smul_vigente = bool(row.get("smul_vigente", False))
+
+        # Check if GeoSampa process was denied (Indeferido)
+        gs_situacao = str(row.get("gs_situacao") or "").strip()
+        gs_indeferido = "indeferido" in gs_situacao.lower()
+
+        # GeoSampa indeferido is a serious irregularity
+        if gs_indeferido:
+            return "INDEFERIDO_PREFEITURA"
 
         # ANAC status checks (federal)
         if not has_anac_match and not is_anac_only:
