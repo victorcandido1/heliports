@@ -96,7 +96,8 @@ SMUL_XLSX_URL = (
 # Output files
 OUTPUT_CSV = "comparativo_helipontos_sp.csv"
 OUTPUT_MAP = "mapa_helipontos_sp.html"
-DASHBOARD_URL = "relatorio_helipontos_sp.html"  # relativo ao mapa (mesmo dir)
+OUTPUT_REPORT = "relatorio_helipontos_sp.html"
+DASHBOARD_URL = OUTPUT_REPORT  # relativo ao mapa (mesmo dir)
 AISWEB_CACHE = "aisweb_helipontos_cache.json"
 AISWEB_BASE_URL = "https://aisweb.decea.mil.br/?i=aerodromos&codigo="
 
@@ -1866,6 +1867,354 @@ def export_csv(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_CSV) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 7. Report generation
+# ---------------------------------------------------------------------------
+
+
+def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> None:
+    """Generate an HTML dashboard report from the consolidated GeoDataFrame."""
+    from datetime import datetime
+
+    n_total = len(gdf)
+    if n_total == 0:
+        log.warning("No data for report generation.")
+        return
+
+    # --- Status counts ---
+    status_counts = gdf["status_consolidado"].value_counts().to_dict()
+    n_regular = status_counts.get("REGULAR", 0)
+    n_irregular = n_total - n_regular
+    n_sem_smul = status_counts.get("SEM_LICENÇA_SMUL", 0)
+    n_no_pref = status_counts.get("NÃO_CADASTRADO_PREFEITURA", 0)
+    n_no_anac = status_counts.get("NÃO_CADASTRADO_ANAC", 0)
+    n_smul_venc = status_counts.get("LICENÇA_SMUL_VENCIDA", 0)
+    n_inativo = status_counts.get("DIVERGENTE_ANAC_INATIVO", 0)
+    n_indeferido = status_counts.get("INDEFERIDO_PREFEITURA", 0)
+
+    pct = lambda v: f"{v / n_total * 100:.1f}%" if n_total else "0%"
+
+    # --- ANAC stats ---
+    has_anac = gdf["anac_oaci"].notna() if "anac_oaci" in gdf.columns else pd.Series([False] * n_total)
+    n_anac = int(has_anac.sum())
+    n_vfr_noite = 0
+    n_vfr_diurno = 0
+    if "anac_status_raw" in gdf.columns:
+        ops = gdf.loc[has_anac, "anac_status_raw"].fillna("").astype(str).str.upper()
+        n_vfr_diurno = int(ops.str.contains("VFR DIURNA|VFR DIURNO", regex=True).sum())
+        n_vfr_noite = n_anac - n_vfr_diurno
+
+    # ANAC tipo breakdown
+    n_priv = 0
+    n_mil = 0
+    if "anac_tipo" in gdf.columns:
+        tipos = gdf.loc[has_anac, "anac_tipo"].fillna("").astype(str).str.upper()
+        n_priv = int(tipos.str.contains("PRIV").sum())
+        n_mil = int(tipos.str.contains("MIL").sum())
+
+    # ANAC validade range
+    anac_val_min = ""
+    anac_val_max = ""
+    if "anac_validade" in gdf.columns:
+        vals = pd.to_datetime(gdf["anac_validade"], errors="coerce").dropna()
+        if not vals.empty:
+            anac_val_min = vals.min().strftime("%d/%m/%Y")
+            anac_val_max = vals.max().strftime("%d/%m/%Y")
+
+    # --- GeoSampa stats ---
+    has_gs = gdf["gs_nome"].notna() if "gs_nome" in gdf.columns else pd.Series([False] * n_total)
+    n_gs = int(has_gs.sum())
+    n_gs_deferido = 0
+    n_gs_indeferido = 0
+    if "gs_situacao" in gdf.columns:
+        sit = gdf.loc[has_gs, "gs_situacao"].fillna("").astype(str)
+        n_gs_deferido = int(sit.str.contains("Deferido", case=False).sum())
+        n_gs_indeferido = int(sit.str.contains("Indeferido", case=False).sum())
+
+    # Ciclos
+    ciclo_col = "qt_total_ciclo_permitido"
+    total_ciclos = 0
+    media_ciclos = 0.0
+    max_ciclos = 0
+    if ciclo_col in gdf.columns:
+        ciclos = pd.to_numeric(gdf[ciclo_col], errors="coerce").fillna(0)
+        total_ciclos = int(ciclos.sum())
+        media_ciclos = round(ciclos.mean(), 1) if len(ciclos) > 0 else 0
+        max_ciclos = int(ciclos.max())
+
+    # --- SMUL stats ---
+    n_smul = int(gdf["smul_licenciado"].sum()) if "smul_licenciado" in gdf.columns else 0
+    n_smul_vigente = int(gdf["smul_vigente"].sum()) if "smul_vigente" in gdf.columns else 0
+    n_smul_vencida = n_smul - n_smul_vigente
+    smul_val_min = ""
+    smul_val_max = ""
+    if "smul_validade" in gdf.columns and n_smul > 0:
+        smul_vals = pd.to_datetime(
+            gdf.loc[gdf["smul_licenciado"] == True, "smul_validade"], errors="coerce"
+        ).dropna()
+        if not smul_vals.empty:
+            smul_val_min = smul_vals.min().strftime("%d/%m/%Y")
+            smul_val_max = smul_vals.max().strftime("%d/%m/%Y")
+    n_sem_lic = n_total - n_smul
+
+    # --- Spatial match stats ---
+    dist = gdf["dist_metros"] if "dist_metros" in gdf.columns else pd.Series(dtype=float)
+    dist_valid = dist[dist > 0].dropna()
+    n_matches = len(dist_valid)
+    dist_mean = f"{dist_valid.mean():.1f}m" if n_matches > 0 else "-"
+    dist_median = f"{dist_valid.median():.1f}m" if n_matches > 0 else "-"
+    n_exact = int((dist_valid < 5).sum())
+    n_close = int(((dist_valid >= 5) & (dist_valid <= 50)).sum())
+    n_far = int(((dist_valid > 50) & (dist_valid <= 200)).sum())
+    n_oaci_match = int((dist == 0).sum()) if "dist_metros" in gdf.columns else 0
+    n_name_match = int((dist < 0).sum()) if "dist_metros" in gdf.columns else 0
+
+    # --- Top 10 distritos ---
+    dist_col = "nm_distrito_municipal"
+    top_distritos_html = ""
+    if dist_col in gdf.columns:
+        dist_counts = gdf[dist_col].dropna().value_counts().head(10)
+        n_outros = n_total - dist_counts.sum()
+        rows = []
+        for distrito, count in dist_counts.items():
+            rows.append(f"    <tr><td>{distrito}</td><td>{count}</td><td>{pct(count)}</td></tr>")
+        rows.append(
+            f'    <tr style="font-weight:bold"><td>Demais distritos</td>'
+            f"<td>{n_outros}</td><td>{pct(n_outros)}</td></tr>"
+        )
+        top_distritos_html = "\n".join(rows)
+
+    # --- Top 10 helipontos por ciclos ---
+    top_ciclos_html = ""
+    if ciclo_col in gdf.columns:
+        gdf_sorted = gdf.nlargest(10, ciclo_col)
+        rows = []
+        for _, r in gdf_sorted.iterrows():
+            nome = r.get("gs_nome") or r.get("anac_nome") or "Sem nome"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci) or not str(oaci).strip():
+                oaci = "-"
+            ciclo = int(r.get(ciclo_col, 0) or 0)
+            distrito = r.get("nm_distrito_municipal") or "-"
+            st = r.get("status_consolidado", "")
+            badge_class = "badge-regular" if st == "REGULAR" else (
+                "badge-warn" if "VENCIDA" in st or "INATIVO" in st else "badge-irregular"
+            )
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td><td><b>{ciclo}</b></td>"
+                f"<td>{distrito}</td>"
+                f"<td><span class='status-badge {badge_class}'>{st}</span></td></tr>"
+            )
+        top_ciclos_html = "\n".join(rows)
+
+    # --- Status bar segments ---
+    def _bar_seg(n, color, title):
+        w = n / n_total * 100 if n_total else 0
+        if w < 0.5 and n > 0:
+            w = 0.5
+        label = str(n) if w >= 3 else ""
+        return f'    <div style="width:{w:.1f}%;background:{color}" title="{title}">{label}</div>'
+
+    bar_segments = "\n".join([
+        _bar_seg(n_regular, "#27ae60", "Regular"),
+        _bar_seg(n_sem_smul, "#c0392b", "Sem Licença SMUL"),
+        _bar_seg(n_no_pref, "#9b59b6", "Não cadastrado Prefeitura"),
+        _bar_seg(n_no_anac, "#e74c3c", "Não cadastrado ANAC"),
+        _bar_seg(n_indeferido, "#8b0000", "Indeferido Prefeitura"),
+        _bar_seg(n_smul_venc, "#d35400", "SMUL Vencida"),
+        _bar_seg(n_inativo, "#e67e22", "ANAC Inativo"),
+    ])
+
+    # --- Status table rows ---
+    status_table_data = [
+        ("badge-regular", "REGULAR", n_regular, "Cadastro ativo na ANAC + licença SMUL vigente"),
+        ("badge-irregular", "SEM_LICENÇA_SMUL", n_sem_smul, "Ativo na ANAC e GeoSampa, mas sem licença municipal da SMUL"),
+        ("badge-irregular", "NÃO_CADASTRADO_PREFEITURA", n_no_pref, "Registrado na ANAC, mas sem cadastro no GeoSampa/Prefeitura"),
+        ("badge-irregular", "NÃO_CADASTRADO_ANAC", n_no_anac, "Cadastrado no GeoSampa, mas sem registro na ANAC federal"),
+        ("badge-irregular", "INDEFERIDO_PREFEITURA", n_indeferido, "Processo indeferido pela Prefeitura (GeoSampa)"),
+        ("badge-warn", "LICENÇA_SMUL_VENCIDA", n_smul_venc, "Possui licença SMUL, porém vencida"),
+        ("badge-warn", "DIVERGENTE_ANAC_INATIVO", n_inativo, "Registrado na ANAC como inativo/cancelado"),
+    ]
+    status_rows = "\n".join(
+        f'    <tr><td><span class="status-badge {badge}">{label}</span></td>'
+        f"<td>{count}</td><td>{pct(count)}</td><td>{desc}</td></tr>"
+        for badge, label, count, desc in status_table_data
+    )
+
+    today = datetime.now().strftime("%d/%m/%Y")
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório de Helipontos — São Paulo</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f7fa; color: #2c3e50; line-height: 1.6; }}
+  .container {{ max-width: 1100px; margin: 0 auto; padding: 20px; }}
+  h1 {{ font-size: 28px; color: #1a252f; margin-bottom: 5px; }}
+  h2 {{ font-size: 20px; color: #2980b9; margin: 30px 0 15px; border-bottom: 2px solid #2980b9; padding-bottom: 5px; }}
+  h3 {{ font-size: 16px; color: #34495e; margin: 15px 0 8px; }}
+  .subtitle {{ color: #7f8c8d; font-size: 14px; margin-bottom: 25px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 15px 0; }}
+  .card {{ background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }}
+  .card .number {{ font-size: 36px; font-weight: bold; }}
+  .card .label {{ font-size: 13px; color: #7f8c8d; margin-top: 4px; }}
+  .green {{ color: #27ae60; }}
+  .red {{ color: #e74c3c; }}
+  .orange {{ color: #e67e22; }}
+  .blue {{ color: #2980b9; }}
+  .purple {{ color: #8e44ad; }}
+  .darkred {{ color: #8b0000; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 10px 0; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+  th {{ background: #2c3e50; color: white; padding: 10px 12px; text-align: left; font-size: 13px; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #ecf0f1; font-size: 13px; }}
+  tr:hover td {{ background: #f8f9fa; }}
+  .status-badge {{ display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; color: white; }}
+  .badge-regular {{ background: #27ae60; }}
+  .badge-irregular {{ background: #e74c3c; }}
+  .badge-warn {{ background: #e67e22; }}
+  .section {{ background: white; border-radius: 10px; padding: 20px 25px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+  .bar {{ height: 24px; border-radius: 12px; display: flex; overflow: hidden; margin: 10px 0; }}
+  .bar div {{ height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; }}
+  .footer {{ text-align: center; color: #95a5a6; font-size: 12px; margin-top: 40px; padding: 20px; }}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Relatório de Helipontos de São Paulo</h1>
+<p class="subtitle">Cruzamento de dados: ANAC (Federal) &times; GeoSampa (Prefeitura) &times; SMUL (Licença Municipal) &mdash; Gerado em {today}</p>
+
+<div class="grid">
+  <div class="card"><div class="number blue">{n_total}</div><div class="label">Total de Helipontos</div></div>
+  <div class="card"><div class="number green">{n_regular}</div><div class="label">Regulares ({pct(n_regular)})</div></div>
+  <div class="card"><div class="number red">{n_irregular}</div><div class="label">Irregulares ({pct(n_irregular)})</div></div>
+  <div class="card"><div class="number orange">{total_ciclos}</div><div class="label">Ciclos/dia autorizados</div></div>
+</div>
+
+<h2>1. Visão Geral — Status Consolidado</h2>
+<div class="section">
+  <p>A análise cruzou <b>{n_anac}</b> registros da ANAC, <b>{n_gs}</b> do GeoSampa e <b>{n_smul}</b> licenças SMUL, totalizando <b>{n_total}</b> helipontos únicos.</p>
+  <div class="bar">
+{bar_segments}
+  </div>
+  <table>
+    <tr><th>Status</th><th>Qtd</th><th>%</th><th>Descrição</th></tr>
+{status_rows}
+  </table>
+</div>
+
+<h2>2. Dados ANAC (Federal)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_anac}</div><div class="label">Registrados na ANAC</div></div>
+    <div class="card"><div class="number green">{n_vfr_noite}</div><div class="label">Operação dia e noite</div></div>
+    <div class="card"><div class="number orange">{n_vfr_diurno}</div><div class="label">Apenas diurno</div></div>
+  </div>
+  <h3>Tipo de Uso</h3>
+  <p><b>{n_priv}</b> helipontos privados (PRIV) e <b>{n_mil}</b> militares (MIL).</p>
+  <h3>Operação Noturna</h3>
+  <p><b>{n_vfr_noite} helipontos</b> permitem operação dia e noite (VFR). <b>{n_vfr_diurno} helipontos</b> têm operação restrita ao período diurno (VFR Diurna) — não aceitam pousos noturnos.</p>
+  <h3>Validade do Registro</h3>
+  <p>Registro mais antigo: <b>{anac_val_min}</b> &mdash;
+     Registro mais recente: <b>{anac_val_max}</b></p>
+  <p style="color:#7f8c8d;font-size:12px">Nota: Muitos registros com data 19/07/2018 correspondem à carga inicial do sistema de dados abertos da ANAC.</p>
+</div>
+
+<h2>3. Dados GeoSampa (Prefeitura)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number blue">{n_gs}</div><div class="label">Cadastrados no GeoSampa</div></div>
+    <div class="card"><div class="number green">{n_gs_deferido}</div><div class="label">Deferidos</div></div>
+    <div class="card"><div class="number darkred">{n_gs_indeferido}</div><div class="label">Indeferidos</div></div>
+  </div>
+  <p style="color:#8b0000;font-weight:bold;margin-top:10px">Os {n_gs_indeferido} helipontos indeferidos são classificados como irregulares (INDEFERIDO_PREFEITURA).</p>
+  <h3>Ciclos de Voo Permitidos</h3>
+  <p>Os ciclos representam o número máximo de pousos+decolagens diários autorizados pela Prefeitura.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Helipontos com info de ciclos</td><td>{n_gs}</td></tr>
+    <tr><td>Total de ciclos/dia autorizados</td><td><b>{total_ciclos}</b></td></tr>
+    <tr><td>Média de ciclos/dia por heliponto</td><td>{media_ciclos}</td></tr>
+    <tr><td>Máximo ciclos/dia (1 heliponto)</td><td>{max_ciclos}</td></tr>
+  </table>
+
+  <h3>Top 10 Helipontos por Ciclos Permitidos</h3>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Ciclos/dia</th><th>Distrito</th><th>Status</th></tr>
+{top_ciclos_html}
+  </table>
+</div>
+
+<h2>4. Dados SMUL (Licença de Funcionamento)</h2>
+<div class="section">
+  <div class="grid">
+    <div class="card"><div class="number purple">{n_smul}</div><div class="label">Com Licença SMUL</div></div>
+    <div class="card"><div class="number green">{n_smul_vigente}</div><div class="label">Vigentes</div></div>
+    <div class="card"><div class="number red">{n_smul_vencida}</div><div class="label">Vencidas</div></div>
+  </div>
+  <p>A SMUL (Secretaria Municipal de Urbanismo e Licenciamento) emite autos de licença de funcionamento conforme Decreto nº 58.094/2018.</p>
+  <p>Validade mais próxima a vencer: <b>{smul_val_min}</b> &mdash; Validade mais distante: <b>{smul_val_max}</b></p>
+  <p style="color:#e74c3c;font-weight:bold">&gt; {n_sem_lic} helipontos ({pct(n_sem_lic)}) não possuem licença SMUL registrada.</p>
+</div>
+
+<h2>5. Distribuição Geográfica (Top 10 Distritos)</h2>
+<div class="section">
+  <table>
+    <tr><th>Distrito</th><th>Helipontos</th><th>% do Total</th></tr>
+{top_distritos_html}
+  </table>
+  <p style="color:#7f8c8d;font-size:12px;margin-top:8px">Nota: Helipontos cadastrados apenas na ANAC (sem GeoSampa) não possuem distrito informado.</p>
+</div>
+
+<h2>6. Qualidade do Cruzamento de Dados</h2>
+<div class="section">
+  <p>O cruzamento GeoSampa &times; ANAC utiliza uma estratégia multi-passe: (1) código OACI exato, (2) proximidade espacial (raio de 100m), (3) correspondência por nome.</p>
+  <table>
+    <tr><th>Métrica</th><th>Valor</th></tr>
+    <tr><td>Matches por código OACI (exato)</td><td>{n_oaci_match}</td></tr>
+    <tr><td>Matches por proximidade espacial</td><td>{n_matches}</td></tr>
+    <tr><td>Matches por nome (fuzzy)</td><td>{n_name_match}</td></tr>
+    <tr><td>Distância média (spatial)</td><td>{dist_mean}</td></tr>
+    <tr><td>Distância mediana (spatial)</td><td>{dist_median}</td></tr>
+    <tr><td>Matches exatos (&lt;5m)</td><td>{n_exact}</td></tr>
+    <tr><td>Matches próximos (5-50m)</td><td>{n_close}</td></tr>
+    <tr><td>Matches distantes (50-100m)</td><td>{n_far}</td></tr>
+  </table>
+</div>
+
+<h2>7. Conclusões e Achados Principais</h2>
+<div class="section">
+  <ol style="padding-left:20px">
+    <li style="margin-bottom:10px"><b>Apenas {pct(n_regular)} dos helipontos estão plenamente regulares</b> (cadastro ANAC ativo + licença SMUL vigente). Os outros {pct(n_irregular)} apresentam alguma irregularidade.</li>
+    <li style="margin-bottom:10px"><b>{n_sem_smul} helipontos operam sem licença municipal (SMUL)</b>, mesmo tendo cadastro ativo na ANAC e no GeoSampa. Esta é a maior categoria de irregularidade.</li>
+    <li style="margin-bottom:10px"><b>{n_no_pref} helipontos registrados na ANAC não constam no GeoSampa</b> da Prefeitura, indicando possível falta de cadastro municipal ou base desatualizada.</li>
+    <li style="margin-bottom:10px"><b>{n_no_anac} helipontos do GeoSampa não possuem registro na ANAC</b>, sugerindo operações sem autorização federal ou registros desatualizados.</li>
+    <li style="margin-bottom:10px"><b>{n_indeferido} helipontos foram indeferidos pela Prefeitura</b> (processo negado no GeoSampa), indicando que não possuem autorização municipal.</li>
+    <li style="margin-bottom:10px"><b>{n_priv} helipontos são privados</b> e <b>{n_mil} são militares</b>.</li>
+    <li style="margin-bottom:10px"><b>{total_ciclos} ciclos/dia estão autorizados</b> no total, com média de {media_ciclos} por heliponto.</li>
+    <li style="margin-bottom:10px"><b>{n_vfr_diurno} helipontos operam apenas de dia</b> (VFR Diurna) — não aceitam pousos noturnos.</li>
+    <li style="margin-bottom:10px"><b>Dimensões e peso máximo (MTOW)</b> estão no <a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB/ROTAER</a> — consulte cada heliponto pelo código OACI.</li>
+  </ol>
+</div>
+
+<div class="footer">
+  <p>Relatório gerado automaticamente em {today} &mdash; Fontes: ANAC (dados abertos), GeoSampa (WFS), SMUL (autos de licença)</p>
+  <p>Arquivos complementares: <code>mapa_helipontos_sp.html</code> (mapa interativo) | <code>comparativo_helipontos_sp.csv</code> (dados tabulares)</p>
+  <p><a href="https://aisweb.decea.mil.br/?i=aerodromos" target="_blank">AISWEB — Aeródromos</a> (dimensões e peso máximo por heliponto)</p>
+</div>
+
+</div>
+</body>
+</html>"""
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    log.info("Report generated: %s", output_path)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2040,11 +2389,13 @@ def main():
     # Step 7: Outputs
     build_map(gdf_result, output_path=args.output_map)
     export_csv(gdf_result, output_path=args.output_csv)
+    generate_report(gdf_result, output_path=OUTPUT_REPORT)
 
     log.info("=" * 60)
     log.info("Done! Files generated:")
     log.info("  CSV: %s", args.output_csv)
     log.info("  Map: %s", args.output_map)
+    log.info("  Report: %s", OUTPUT_REPORT)
     log.info("=" * 60)
 
 
