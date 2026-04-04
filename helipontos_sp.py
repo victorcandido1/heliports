@@ -398,20 +398,12 @@ def load_anac(local_csv: str | None = None) -> gpd.GeoDataFrame:
     col_map = _detect_anac_columns(df)
     log.info("ANAC column mapping: %s", col_map)
 
-    # --- Filter to UF=SP, MUNICÍPIO=SÃO PAULO ---
+    # --- Filter to UF=SP (inclui RMSP e litoral próximo) ---
     if col_map["uf"]:
         uf_vals = df[col_map["uf"]].astype(str).str.strip().str.upper()
         df = df[uf_vals.isin(["SP"]) | uf_vals.str.contains("S.O PAULO", regex=True, na=False)]
-    if col_map["municipio"]:
-        df = df[
-            df[col_map["municipio"]]
-            .astype(str)
-            .str.strip()
-            .str.upper()
-            .str.contains("S.O PAULO|SAO PAULO|SÃO PAULO", regex=True, na=False)
-        ]
 
-    log.info("ANAC rows after SP / São Paulo filter: %d", len(df))
+    log.info("ANAC rows after UF=SP filter: %d", len(df))
 
     if df.empty:
         log.error("No ANAC records for São Paulo found.")
@@ -1223,7 +1215,7 @@ def _build_popup_html(row, lat, lon, status, color, is_irregular):
         )
         if pd.notna(anac_val):
             anac_val_str = _fmt(anac_val, fmt_date=True) or str(anac_val)[:10]
-            p.append(f"<b>Validade registro:</b> {anac_val_str}<br>")
+            p.append(f"<b>Data de registro ANAC:</b> {anac_val_str}<br>")
     else:
         p.append("<hr style='margin:4px 0'>")
         p.append(
