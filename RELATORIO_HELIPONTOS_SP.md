@@ -44,7 +44,7 @@ Este relatório consolida a análise de **todas as bases de dados públicas** so
 | **SMUL** | Autos de Licença de Funcionamento | 80 licenças | Planilha XLSX (portal Prefeitura) |
 | **AISWEB/ROTAER** | Dimensões, superfície, MTOW | 150 helipontos | Web scraping (DECEA) |
 | **Diário Oficial (DOC)** | Publicações oficiais da Prefeitura | 173 processos | Busca automatizada |
-| **TJSP (CJSG)** | Jurisprudência — ac��rdãos | 360 resultados (74 relevantes) | Script R (ESAJ) |
+| **TJSP (CJSG)** | Jurisprudência — acórdãos | 360 resultados (74 relevantes) | Script R (ESAJ) |
 
 ### 2.2 Estratégia de cruzamento
 
