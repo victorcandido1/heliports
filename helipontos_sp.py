@@ -2496,6 +2496,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     # --- Top 10 helipontos por ciclos ---
     top_ciclos_html = ""
     if ciclo_col in gdf.columns:
+        gdf[ciclo_col] = pd.to_numeric(gdf[ciclo_col], errors="coerce").fillna(0)
         gdf_sorted = gdf.nlargest(10, ciclo_col)
         rows = []
         for _, r in gdf_sorted.iterrows():
