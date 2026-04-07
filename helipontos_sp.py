@@ -1418,6 +1418,7 @@ def spatial_join(
 
 STATUS_COLORS = {
     "REGULAR": "#2ecc71",
+    "FORA_SP_ANAC_OK": "#5dade2",
     "DIVERGENTE_ANAC_INATIVO": "#e67e22",
     "NÃO_CADASTRADO_ANAC": "#e74c3c",
     "NÃO_CADASTRADO_PREFEITURA": "#9b59b6",
@@ -1443,6 +1444,7 @@ def _irregular_label(status: str) -> str:
         "DIVERGENTE_ANAC_INATIVO": "IRREGULAR — ANAC inativo",
         "NÃO_CADASTRADO_ANAC": "IRREGULAR — Sem cadastro na ANAC",
         "NÃO_CADASTRADO_PREFEITURA": "IRREGULAR — Sem cadastro na Prefeitura",
+        "FORA_SP_ANAC_OK": "Fora de SP Capital — ANAC OK",
         "INDEFERIDO_PREFEITURA": "IRREGULAR — Indeferido pela Prefeitura",
         "SEM_LICENÇA_SMUL": "IRREGULAR — Sem licença SMUL",
         "LICENÇA_SMUL_VENCIDA": "IRREGULAR — Licença SMUL vencida",
@@ -2166,7 +2168,8 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
     # --- Status counts ---
     status_counts = gdf["status_consolidado"].value_counts().to_dict()
     n_regular = status_counts.get("REGULAR", 0)
-    n_irregular = n_total - n_regular
+    n_fora_sp = status_counts.get("FORA_SP_ANAC_OK", 0)
+    n_irregular = n_total - n_regular - n_fora_sp
     n_sem_smul = status_counts.get("SEM_LICENÇA_SMUL", 0)
     n_no_pref = status_counts.get("NÃO_CADASTRADO_PREFEITURA", 0)
     n_no_anac = status_counts.get("NÃO_CADASTRADO_ANAC", 0)
@@ -2527,6 +2530,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
 
     bar_segments = "\n".join([
         _bar_seg(n_regular, "#27ae60", "Regular"),
+        _bar_seg(n_fora_sp, "#5dade2", "Fora de SP — ANAC OK"),
         _bar_seg(n_sem_smul, "#c0392b", "Sem Licença SMUL"),
         _bar_seg(n_no_pref, "#9b59b6", "Não cadastrado Prefeitura"),
         _bar_seg(n_no_anac, "#e74c3c", "Não cadastrado ANAC"),
@@ -2537,9 +2541,10 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
 
     # --- Status table rows ---
     status_table_data = [
-        ("badge-regular", "REGULAR", n_regular, "Cadastro ativo na ANAC + licença SMUL vigente"),
+        ("badge-regular", "REGULAR", n_regular, "Cadastro ativo na ANAC + licença SMUL vigente ou GeoSampa deferido"),
+        ("badge-fora-sp", "FORA_SP_ANAC_OK", n_fora_sp, "Fora de São Paulo Capital — cadastro ativo na ANAC (sem obrigação de cadastro municipal SP)"),
         ("badge-irregular", "SEM_LICENÇA_SMUL", n_sem_smul, "Ativo na ANAC e GeoSampa, mas sem licença municipal da SMUL"),
-        ("badge-irregular", "NÃO_CADASTRADO_PREFEITURA", n_no_pref, "Registrado na ANAC, mas sem cadastro no GeoSampa/Prefeitura"),
+        ("badge-irregular", "NÃO_CADASTRADO_PREFEITURA", n_no_pref, "Registrado na ANAC em SP Capital, mas sem cadastro no GeoSampa/Prefeitura"),
         ("badge-irregular", "NÃO_CADASTRADO_ANAC", n_no_anac, "Cadastrado no GeoSampa, mas sem registro na ANAC federal"),
         ("badge-irregular", "INDEFERIDO_PREFEITURA", n_indeferido, "Processo indeferido pela Prefeitura (GeoSampa)"),
         ("badge-warn", "LICENÇA_SMUL_VENCIDA", n_smul_venc, "Possui licença SMUL, porém vencida"),
@@ -2701,6 +2706,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   .card .number {{ font-size: 36px; font-weight: bold; }}
   .card .label {{ font-size: 13px; color: #7f8c8d; margin-top: 4px; }}
   .green {{ color: #27ae60; }}
+  .lightblue {{ color: #5dade2; }}
   .red {{ color: #e74c3c; }}
   .orange {{ color: #e67e22; }}
   .blue {{ color: #2980b9; }}
@@ -2712,6 +2718,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   tr:hover td {{ background: #f8f9fa; }}
   .status-badge {{ display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; color: white; }}
   .badge-regular {{ background: #27ae60; }}
+  .badge-fora-sp {{ background: #5dade2; }}
   .badge-irregular {{ background: #e74c3c; }}
   .badge-warn {{ background: #e67e22; }}
   .section {{ background: white; border-radius: 10px; padding: 20px 25px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
@@ -2729,6 +2736,7 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
 <div class="grid">
   <div class="card"><div class="number blue">{n_total}</div><div class="label">Total de Helipontos</div></div>
   <div class="card"><div class="number green">{n_regular}</div><div class="label">Regulares ({pct(n_regular)})</div></div>
+  <div class="card"><div class="number lightblue">{n_fora_sp}</div><div class="label">Fora de SP — ANAC OK ({pct(n_fora_sp)})</div></div>
   <div class="card"><div class="number red">{n_irregular}</div><div class="label">Irregulares ({pct(n_irregular)})</div></div>
   <div class="card"><div class="number orange">{total_ciclos}</div><div class="label">Ciclos/dia autorizados</div></div>
 </div>
@@ -3118,6 +3126,12 @@ def main():
         gs_deferido = "deferido" in gs_situacao_val.lower()
         if gs_deferido and has_anac_match and anac_ativo:
             return "REGULAR"
+
+        # Heliports outside SP capital with active ANAC — light blue
+        anac_mun = str(row.get("anac_municipio") or "").strip().upper()
+        is_fora_sp = anac_mun and anac_mun not in ("SÃO PAULO", "SAO PAULO", "S\u00C3O PAULO")
+        if is_fora_sp and anac_ativo and (is_anac_only or not has_geosampa):
+            return "FORA_SP_ANAC_OK"
 
         # No SMUL license found
         if is_anac_only and not has_geosampa:
