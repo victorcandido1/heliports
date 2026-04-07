@@ -2551,6 +2551,135 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
         for badge, label, count, desc in status_table_data
     )
 
+    # --- Heliports OK lists (for section 1) ---
+    # Parse MTOW numeric from display string (e.g. "2.5 t" -> 2.5)
+    def _parse_mtow(val):
+        if pd.isna(val) or not str(val).strip():
+            return 0.0
+        try:
+            return float(str(val).replace("t", "").replace(",", ".").strip())
+        except (ValueError, TypeError):
+            return 0.0
+
+    # Parse min dimension from "30×30 m" -> 30
+    def _parse_min_dim(val):
+        if pd.isna(val) or not str(val).strip():
+            return 0
+        m = _RE_DIM.search(str(val))
+        if m:
+            return min(int(m.group(1)), int(m.group(2)))
+        return 0
+
+    gdf["_mtow_num"] = gdf["aisweb_mtow"].apply(_parse_mtow) if "aisweb_mtow" in gdf.columns else 0.0
+    gdf["_min_dim"] = gdf["aisweb_dimensoes"].apply(_parse_min_dim) if "aisweb_dimensoes" in gdf.columns else 0
+
+    # Heliports REGULAR with >=21x21
+    ok_21 = gdf[(gdf["status_consolidado"] == "REGULAR") & (gdf["_min_dim"] >= 21)]
+
+    # OK >= 4 tons
+    ok_4t = ok_21[ok_21["_mtow_num"] >= 4].sort_values("_mtow_num", ascending=False)
+    # OK >= 5 tons
+    ok_5t = ok_21[ok_21["_mtow_num"] >= 5].sort_values("_mtow_num", ascending=False)
+
+    def _build_heliport_table(subset, show_mtow=True):
+        rows = []
+        for _, r in subset.iterrows():
+            nome = r.get("gs_nome") or r.get("anac_nome") or "Sem nome"
+            oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+            if pd.isna(oaci) or not str(oaci).strip():
+                oaci = "-"
+            dims = r.get("aisweb_dimensoes") or "-"
+            mtow = r.get("aisweb_mtow") or "-"
+            operacao = r.get("anac_status_raw") or "-"
+            distrito = r.get("nm_distrito_municipal") or "-"
+            endereco = r.get("gs_endereco") or "-"
+            rows.append(
+                f"    <tr><td>{nome}</td><td>{oaci}</td><td>{dims}</td>"
+                f"<td>{mtow}</td><td>{operacao}</td><td>{distrito}</td>"
+                f"<td>{endereco}</td></tr>"
+            )
+        return "\n".join(rows)
+
+    ok_4t_html = _build_heliport_table(ok_4t)
+    ok_5t_html = _build_heliport_table(ok_5t)
+    n_ok_4t = len(ok_4t)
+    n_ok_5t = len(ok_5t)
+
+    # --- ANAC OK sem SMUL with license loss reason ---
+    anac_ok_sem_smul = gdf[
+        (gdf["status_consolidado"] == "SEM_LICENÇA_SMUL") &
+        (gdf.get("anac_oaci", pd.Series(dtype=str)).notna())
+    ].copy()
+    anac_ok_sem_smul["_mtow_num"] = anac_ok_sem_smul["aisweb_mtow"].apply(_parse_mtow) if "aisweb_mtow" in anac_ok_sem_smul.columns else 0.0
+    anac_ok_sem_smul["_min_dim"] = anac_ok_sem_smul["aisweb_dimensoes"].apply(_parse_min_dim) if "aisweb_dimensoes" in anac_ok_sem_smul.columns else 0
+
+    # Filter to >=21x21 and >=4t
+    anac_ok_sem_smul_4t = anac_ok_sem_smul[
+        (anac_ok_sem_smul["_min_dim"] >= 21) & (anac_ok_sem_smul["_mtow_num"] >= 4)
+    ].sort_values("_mtow_num", ascending=False)
+    anac_ok_sem_smul_5t = anac_ok_sem_smul[
+        (anac_ok_sem_smul["_min_dim"] >= 21) & (anac_ok_sem_smul["_mtow_num"] >= 5)
+    ].sort_values("_mtow_num", ascending=False)
+
+    def _license_reason(r):
+        """Determine why heliport lacks SMUL license."""
+        gs_sit = str(r.get("gs_situacao") or "").strip()
+        has_gs = pd.notna(r.get("gs_nome"))
+        smul_lic = bool(r.get("smul_licenciado", False))
+        smul_vig = bool(r.get("smul_vigente", False))
+
+        if smul_lic and not smul_vig:
+            val = pd.to_datetime(r.get("smul_validade"), errors="coerce")
+            if pd.notna(val):
+                return f"Licença SMUL vencida em {val.strftime('%d/%m/%Y')}"
+            return "Licença SMUL vencida"
+        if "indeferido" in gs_sit.lower():
+            return "Indeferido pela Prefeitura"
+        if has_gs and gs_sit:
+            return f"GeoSampa: {gs_sit} — sem licença SMUL"
+        if has_gs:
+            return "Cadastrado no GeoSampa, sem licença SMUL"
+        return "Sem cadastro na Prefeitura/SMUL"
+
+    sem_smul_rows = []
+    for _, r in anac_ok_sem_smul_4t.iterrows():
+        nome = r.get("gs_nome") or r.get("anac_nome") or "Sem nome"
+        oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+        if pd.isna(oaci) or not str(oaci).strip():
+            oaci = "-"
+        dims = r.get("aisweb_dimensoes") or "-"
+        mtow = r.get("aisweb_mtow") or "-"
+        motivo = _license_reason(r)
+        endereco = r.get("gs_endereco") or "-"
+        sem_smul_rows.append(
+            f"    <tr><td>{nome}</td><td>{oaci}</td><td>{dims}</td>"
+            f"<td>{mtow}</td><td>{endereco}</td>"
+            f"<td>{motivo}</td></tr>"
+        )
+    sem_smul_4t_html = "\n".join(sem_smul_rows)
+    n_sem_smul_4t = len(anac_ok_sem_smul_4t)
+
+    sem_smul_5t_rows = []
+    for _, r in anac_ok_sem_smul_5t.iterrows():
+        nome = r.get("gs_nome") or r.get("anac_nome") or "Sem nome"
+        oaci = r.get("gs_oaci") or r.get("anac_oaci") or "-"
+        if pd.isna(oaci) or not str(oaci).strip():
+            oaci = "-"
+        dims = r.get("aisweb_dimensoes") or "-"
+        mtow = r.get("aisweb_mtow") or "-"
+        motivo = _license_reason(r)
+        endereco = r.get("gs_endereco") or "-"
+        sem_smul_5t_rows.append(
+            f"    <tr><td>{nome}</td><td>{oaci}</td><td>{dims}</td>"
+            f"<td>{mtow}</td><td>{endereco}</td>"
+            f"<td>{motivo}</td></tr>"
+        )
+    sem_smul_5t_html = "\n".join(sem_smul_5t_rows)
+    n_sem_smul_5t = len(anac_ok_sem_smul_5t)
+
+    # Cleanup temp columns
+    gdf.drop(columns=["_mtow_num", "_min_dim"], inplace=True, errors="ignore")
+
     today = datetime.now().strftime("%d/%m/%Y")
 
     html = f"""<!DOCTYPE html>
@@ -2613,6 +2742,34 @@ def generate_report(gdf: gpd.GeoDataFrame, output_path: str = OUTPUT_REPORT) -> 
   <table>
     <tr><th>Status</th><th>Qtd</th><th>%</th><th>Descrição</th></tr>
 {status_rows}
+  </table>
+
+  <h3 style="color:#27ae60;margin-top:25px">Helipontos Regulares com capacidade &ge; 4 toneladas ({n_ok_4t})</h3>
+  <p style="font-size:12px;color:#7f8c8d">Helipontos OK em todas as fontes (ANAC ativa + GeoSampa deferido ou SMUL vigente), com dimensões &ge; 21&times;21m e MTOW &ge; 4t.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Dimensões</th><th>MTOW</th><th>Operação</th><th>Distrito</th><th>Endereço</th></tr>
+{ok_4t_html}
+  </table>
+
+  <h3 style="color:#27ae60;margin-top:20px">Dentre estes, com capacidade &ge; 5 toneladas ({n_ok_5t})</h3>
+  <p style="font-size:12px;color:#7f8c8d">Subconjunto acima com MTOW &ge; 5t — capacidade para aeronaves maiores.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Dimensões</th><th>MTOW</th><th>Operação</th><th>Distrito</th><th>Endereço</th></tr>
+{ok_5t_html}
+  </table>
+
+  <h3 style="color:#e67e22;margin-top:25px">ANAC OK sem licença SMUL — &ge; 4 toneladas ({n_sem_smul_4t})</h3>
+  <p style="font-size:12px;color:#7f8c8d">Helipontos com cadastro ativo na ANAC, dimensões &ge; 21&times;21m, MTOW &ge; 4t, mas sem licença municipal SMUL vigente. Inclui motivo da irregularidade.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Dimensões</th><th>MTOW</th><th>Endereço</th><th>Motivo</th></tr>
+{sem_smul_4t_html}
+  </table>
+
+  <h3 style="color:#e67e22;margin-top:20px">ANAC OK sem licença SMUL — &ge; 5 toneladas ({n_sem_smul_5t})</h3>
+  <p style="font-size:12px;color:#7f8c8d">Subconjunto acima com MTOW &ge; 5t.</p>
+  <table>
+    <tr><th>Nome</th><th>OACI</th><th>Dimensões</th><th>MTOW</th><th>Endereço</th><th>Motivo</th></tr>
+{sem_smul_5t_html}
   </table>
 </div>
 
@@ -2955,6 +3112,12 @@ def main():
             return "REGULAR"
         if has_smul and not smul_vigente:
             return "LICENÇA_SMUL_VENCIDA"
+
+        # GeoSampa deferido + ANAC ativo = REGULAR (green)
+        gs_situacao_val = str(row.get("gs_situacao") or "").strip()
+        gs_deferido = "deferido" in gs_situacao_val.lower()
+        if gs_deferido and has_anac_match and anac_ativo:
+            return "REGULAR"
 
         # No SMUL license found
         if is_anac_only and not has_geosampa:
